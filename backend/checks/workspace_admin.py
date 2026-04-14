@@ -1,0 +1,171 @@
+"""Section: Workspace Administration — checks for workspace health, user activity,
+AI assistant adoption, CI/CD practices. Merges former CI/CD section.
+All checks include drill-down details with actual objects and recommendations."""
+from checks.base import BaseCheckRunner, CheckResult, Recommendation
+
+
+class WorkspaceAdminCheckRunner(BaseCheckRunner):
+    section_id = "workspace_admin"
+    section_name = "Workspace Administration"
+    section_type = "core"
+    icon = "settings"
+
+    def get_subsections(self):
+        return ["User & Resource Activity", "AI Assistant Adoption", "Deployment Practices"]
+
+    def check_12_2_1_active_users(self) -> CheckResult:
+        try:
+            rows = self.executor.execute("""
+                SELECT user_identity.email AS user_email, COUNT(*) AS event_count
+                FROM system.access.audit
+                WHERE event_time >= DATEADD(DAY, -90, CURRENT_DATE())
+                    AND user_identity.email IS NOT NULL
+                GROUP BY 1
+                ORDER BY 2 DESC
+                LIMIT 30""")
+        except Exception:
+            return CheckResult("12.2.1", "Active vs. inactive users",
+                "User & Resource Activity", 0, "not_evaluated",
+                "Could not query audit logs", "<20% inactive")
+        active = len(rows)
+        nc = [{"user": r.get("user_email",""), "events_90d": r.get("event_count",0)} for r in rows[:20]]
+        return CheckResult("12.2.1", "Active users (last 90 days)",
+            "User & Resource Activity", 0, "info",
+            f"{active} active users in last 90 days", "Informational",
+            details={"non_conforming": nc, "summary": f"Top {min(active, 20)} users by activity (90 days)."})
+
+    def check_12_2_5_runtime_spread(self) -> CheckResult:
+        try:
+            rows = self.executor.execute("""
+                SELECT dbr_version, COUNT(*) AS cluster_count
+                FROM system.compute.clusters
+                WHERE delete_time IS NULL AND cluster_source IN ('UI', 'API') AND dbr_version IS NOT NULL
+                GROUP BY 1 ORDER BY 2 DESC""")
+        except Exception:
+            return CheckResult("12.2.5", "Runtime version health",
+                "User & Resource Activity", 0, "not_evaluated",
+                "Could not query", "All on supported versions")
+        supported_prefixes = ["15.4", "16.", "17.", "18."]
+        total = sum(int(r.get("cluster_count", 0)) for r in rows)
+        eol = [r for r in rows if not any(str(r.get("dbr_version","")).startswith(p) for p in supported_prefixes)]
+        eol_count = sum(int(r.get("cluster_count", 0)) for r in eol)
+        eol_pct = (eol_count / max(total, 1)) * 100
+        if eol_pct == 0: score, status = 100, "pass"
+        elif eol_pct <= 10: score, status = 50, "partial"
+        else: score, status = 0, "fail"
+        nc = [{"dbr_version": r.get("dbr_version",""), "cluster_count": r.get("cluster_count",0),
+               "status": "EOL" if r in eol else "OK"} for r in rows[:20]]
+        rec = None
+        if eol_count:
+            rec = Recommendation(
+                action=f"Upgrade {eol_count} cluster(s) from EOL runtimes.",
+                impact="EOL runtimes miss security patches and performance improvements.",
+                priority="medium",
+                docs_url="https://docs.databricks.com/en/release-notes/runtime/index.html")
+        return CheckResult("12.2.5", "Runtime version health",
+            "User & Resource Activity", score, status,
+            f"{eol_count}/{total} interactive clusters on EOL runtimes",
+            "All on supported versions (15.4 LTS+)",
+            details={"non_conforming": nc}, recommendation=rec)
+
+    # ── AI Assistant Adoption (Tier 1) ────────────────────────────────
+
+    def check_12_3_1_assistant_adoption(self) -> CheckResult:
+        """Tier 1: Databricks Assistant usage — measure AI tool adoption."""
+        try:
+            rows = self.executor.execute("""
+                SELECT initiated_by, COUNT(*) AS events
+                FROM system.access.assistant_events
+                WHERE event_time >= DATEADD(DAY, -30, CURRENT_DATE())
+                GROUP BY 1
+                ORDER BY 2 DESC
+                LIMIT 30""")
+            total_events = sum(int(r.get("events",0)) for r in rows)
+            total_users = len(rows)
+        except Exception:
+            return CheckResult("12.3.1", "Databricks Assistant adoption",
+                "AI Assistant Adoption", 0, "not_evaluated",
+                "Could not query assistant events", "Active Assistant usage")
+
+        if total_events == 0:
+            return CheckResult("12.3.1", "Databricks Assistant adoption",
+                "AI Assistant Adoption", 0, "fail",
+                "No Assistant usage detected", "Active Assistant usage",
+                details={"non_conforming": [{"summary": "No Databricks Assistant events found in last 30 days."}]},
+                recommendation=Recommendation(
+                    action="Enable and promote Databricks Assistant for code generation, debugging, and SQL authoring.",
+                    impact="AI Assistant can dramatically increase developer productivity.",
+                    priority="low",
+                    docs_url="https://docs.databricks.com/en/notebooks/use-databricks-assistant.html"))
+
+        nc = [{"user": r.get("initiated_by",""), "events_30d": r.get("events",0)} for r in rows[:20]]
+
+        # If >100 users, excellent; >20, good
+        if total_users >= 100: score, status = 100, "pass"
+        elif total_users >= 20: score, status = 50, "partial"
+        else: score, status = 0, "fail"
+
+        rec = None
+        if score < 100:
+            rec = Recommendation(
+                action=f"{total_users} users are using Databricks Assistant ({total_events:,} events in 30d). Promote adoption to more team members.",
+                impact="AI Assistant accelerates development through code generation, debugging, and natural language querying.",
+                priority="low",
+                docs_url="https://docs.databricks.com/en/notebooks/use-databricks-assistant.html")
+
+        return CheckResult("12.3.1", "Databricks Assistant adoption",
+            "AI Assistant Adoption", score, status,
+            f"{total_users} users, {total_events:,} events in 30 days",
+            "Active Assistant usage across team",
+            details={"non_conforming": nc}, recommendation=rec)
+
+    # ── Deployment Practices (merged from CI/CD) ─────────────────────
+
+    def check_12_4_1_manual_runs(self) -> CheckResult:
+        """Merged from CI/CD section: Jobs triggered manually vs automated."""
+        try:
+            rows = self.executor.execute("""
+                SELECT j.job_id, j.name AS job_name,
+                    SUM(CASE WHEN r.trigger_type = 'MANUAL' THEN 1 ELSE 0 END) AS manual_runs,
+                    COUNT(*) AS total_runs,
+                    ROUND(SUM(CASE WHEN r.trigger_type = 'MANUAL' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS manual_pct
+                FROM system.lakeflow.job_run_timeline r
+                JOIN system.lakeflow.jobs j ON r.job_id = j.job_id
+                WHERE r.period_start_time >= DATEADD(DAY, -30, CURRENT_DATE())
+                    AND j.delete_time IS NULL
+                GROUP BY 1, 2
+                HAVING COUNT(*) >= 5 AND SUM(CASE WHEN r.trigger_type = 'MANUAL' THEN 1 ELSE 0 END) * 100.0 / COUNT(*) > 50
+                ORDER BY 3 DESC
+                LIMIT 20""")
+            stats = self.executor.execute("""
+                SELECT SUM(CASE WHEN trigger_type = 'MANUAL' THEN 1 ELSE 0 END) AS manual,
+                    COUNT(*) AS total
+                FROM system.lakeflow.job_run_timeline
+                WHERE period_start_time >= DATEADD(DAY, -30, CURRENT_DATE())""")
+        except Exception:
+            return CheckResult("12.4.1", "Jobs triggered via CI/CD vs manual",
+                "Deployment Practices", 0, "not_evaluated",
+                "Could not query", "<10% manual")
+        s = stats[0] if stats else {}
+        total = int(s.get("total", 0)) or 1
+        manual = int(s.get("manual", 0))
+        pct = manual / total * 100
+        if pct < 10: score, status = 100, "pass"
+        elif pct < 30: score, status = 50, "partial"
+        else: score, status = 0, "fail"
+        nc = [{"job_name": r.get("job_name",""), "job_id": r.get("job_id",""),
+               "manual_runs": r.get("manual_runs",0), "total_runs": r.get("total_runs",0),
+               "manual_pct": r.get("manual_pct",0),
+               "action": "Add a schedule, file-arrival, or CI/CD trigger"} for r in rows[:20]]
+        if not nc and pct < 10:
+            nc = [{"summary": f"Only {pct:.0f}% of runs are manual — well automated."}]
+        rec = None
+        if score < 100:
+            rec = Recommendation(
+                action=f"{pct:.0f}% of runs are manual ({manual}/{total}). Automate via scheduled triggers or CI/CD.",
+                impact="Manual runs are error-prone and not reproducible.",
+                priority="medium")
+        return CheckResult("12.4.1", "Jobs triggered via CI/CD vs manual",
+            "Deployment Practices", score, status,
+            f"{pct:.0f}% manual runs ({manual}/{total})",
+            "<10% manual runs", details={"non_conforming": nc}, recommendation=rec)

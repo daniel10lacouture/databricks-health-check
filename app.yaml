@@ -1,0 +1,9 @@
+command:
+  - /bin/sh
+  - -c
+  - |
+    pip install -r backend/requirements.txt &&
+    python backend/app.py
+env:
+  - name: DATABRICKS_APP_PORT
+    valueFrom: port
