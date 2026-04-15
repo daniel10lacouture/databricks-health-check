@@ -49,12 +49,20 @@ def compute_overall_score(section_results: list[dict]) -> dict:
 
     overall = round(sum(s["score"] for s in active_sections) / len(active_sections), 1)
 
+    if overall >= 90: maturity_level, maturity_label = 5, "Elite"
+    elif overall >= 75: maturity_level, maturity_label = 4, "Advanced"
+    elif overall >= 60: maturity_level, maturity_label = 3, "Optimized"
+    elif overall >= 40: maturity_level, maturity_label = 2, "Managed"
+    else: maturity_level, maturity_label = 1, "Foundational"
+
     return {
         "overall_score": overall,
         "label": score_label(overall),
         "color": score_color(overall),
         "active_sections": len(active_sections),
         "total_sections": len(section_results),
+        "maturity_level": maturity_level,
+        "maturity_label": maturity_label,
     }
 
 

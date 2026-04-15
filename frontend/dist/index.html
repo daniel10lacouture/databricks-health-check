@@ -145,6 +145,110 @@ function renderGaugeSVG(score,size,showLabel){
     +'</svg>';
 }
 
+
+function renderInsightsPanel(){
+  const r=state.results;if(!r)return'';
+  const ins=r.insights||{};const ai=r.ai_insights||{};const ov=r.overall||{};
+  const ml=ov.maturity_level||ins.maturity?.level||0;
+  const mlabel=ov.maturity_label||ins.maturity?.label||'';
+  const mdesc=ins.maturity?.description||'';
+  if(!ml&&!Object.keys(ins).length&&!ai.executive_summary)return'';
+
+  const mColors={1:'#DC2626',2:'#D97706',3:'#2563EB',4:'#059669',5:'#7C3AED'};
+  const mc=mColors[ml]||'#9CA3AF';
+  let h='';
+
+  /* Maturity + Anomalies row */
+  h+='<div style="display:flex;gap:14px;margin-bottom:14px;flex-wrap:wrap">';
+  if(ml>0){
+    h+=`<div class="card" style="flex:1 1 280px;padding:20px;display:flex;align-items:center;gap:18px">
+      <div style="width:58px;height:58px;border-radius:14px;background:${mc}12;display:flex;align-items:center;justify-content:center;border:2px solid ${mc};flex-shrink:0">
+        <span style="font-size:26px;font-weight:800;color:${mc}">${ml}</span>
+      </div>
+      <div>
+        <div style="font-size:11px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.8px;font-weight:600">Maturity Level</div>
+        <div style="font-size:18px;font-weight:700">${esc(mlabel)}</div>
+        ${mdesc?`<div style="font-size:12px;color:#6B7280;margin-top:2px">${esc(mdesc)}</div>`:''}
+      </div>
+    </div>`;
+  }
+  const anomalies=ins.anomalies||[];
+  if(anomalies.length>0){
+    h+='<div style="flex:1 1 280px;display:flex;flex-direction:column;gap:6px">';
+    anomalies.forEach(a=>{
+      const bg=a.severity==='high'?'#FEF2F2':'#FFFBEB';
+      const bc=a.severity==='high'?'#FECACA':'#FDE68A';
+      const ic=a.severity==='high'?'#DC2626':'#D97706';
+      h+=`<div style="background:${bg};border-radius:8px;padding:10px 14px;border:1px solid ${bc};display:flex;align-items:flex-start;gap:8px">
+        <span style="color:${ic};flex-shrink:0">\u26A0</span>
+        <div><div style="font-size:13px;font-weight:600">${esc(a.title)}</div><div style="font-size:12px;color:#6B7280">${esc(a.message)}</div></div>
+      </div>`;
+    });
+    h+='</div>';
+  }
+  h+='</div>';
+
+  /* Trends row */
+  const trends=ins.trends||{};const tkeys=Object.keys(trends);
+  if(tkeys.length>0){
+    h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-bottom:14px">';
+    tkeys.forEach(k=>{
+      const t=trends[k];const d=t.data||[];const last=d.length?d[d.length-1]:null;
+      let val='\u2014';
+      if(last){
+        if(last.value!=null)val=last.value.toLocaleString()+' '+t.unit;
+        else if(last.p95_sec!=null)val=last.p95_sec+'s P95';
+        else if(last.failure_rate!=null)val=last.failure_rate+'%';
+      }
+      const arrows={increasing:'\u2191 Trending up',decreasing:'\u2193 Trending down',stable:'\u2192 Stable',insufficient_data:'\u2014 Limited data'};
+      const tColor=t.direction==='decreasing'?'#059669':t.direction==='increasing'?(k==='cost'||k==='job_failures'?'#DC2626':'#059669'):'#9CA3AF';
+      h+=`<div class="card" style="padding:12px 14px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span style="font-size:11px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.5px;font-weight:600">${esc(t.label)}</span>
+        </div>
+        <div style="font-size:17px;font-weight:700;margin-top:3px">${esc(val)}</div>
+        <div style="font-size:11px;color:${tColor};font-weight:500;margin-top:2px">${arrows[t.direction]||''} <span style="color:#9CA3AF">(12 wks)</span></div>
+      </div>`;
+    });
+    h+='</div>';
+  }
+
+  /* What-if scenarios */
+  const whatif=ins.whatif_scenarios||[];
+  if(whatif.length>0){
+    h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;margin-bottom:14px">';
+    whatif.forEach(s=>{
+      h+=`<div style="background:#F0FDF4;border-radius:8px;padding:14px;border:1px solid #BBF7D0">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span style="color:#059669">\uD83D\uDCB0</span><span style="font-size:13px;font-weight:600;color:#065F46">${esc(s.title)}</span></div>
+        <div style="font-size:12px;color:#047857;margin-bottom:4px">${esc(s.description)}</div>
+        <div style="font-size:11px"><span style="color:#059669;font-weight:600">${esc(s.estimated_savings)}</span> <span style="color:#6B7280">\u00B7 Effort: ${esc(s.effort)}</span></div>
+      </div>`;
+    });
+    h+='</div>';
+  }
+
+  /* AI Insights (collapsible) */
+  if(ai.executive_summary&&!ai.error){
+    h+=`<div class="card" style="overflow:hidden;margin-bottom:14px">
+      <div id="aiToggle" style="padding:14px 18px;background:linear-gradient(135deg,#F5F3FF,#EEF2FF);cursor:pointer;display:flex;align-items:center;justify-content:space-between">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:16px">\u2728</span>
+          <span style="font-size:14px;font-weight:600;color:#4C1D95">AI-Powered Insights</span>
+          <span style="font-size:11px;color:#6D28D9;background:#EDE9FE;padding:2px 8px;border-radius:10px;font-weight:500">${esc(ai.model||'GenAI')}</span>
+        </div>
+        <span id="aiChevron" style="color:#6D28D9;font-size:14px">\u25BC</span>
+      </div>
+      <div id="aiBody" style="display:none;padding:20px">
+        <div style="margin-bottom:18px"><div style="font-size:13px;font-weight:600;margin-bottom:6px">\uD83E\uDDE0 Executive Summary</div><div style="font-size:13px;line-height:1.7;color:#6B7280;white-space:pre-wrap">${esc(ai.executive_summary)}</div></div>
+        ${(ai.cross_section_insights||[]).length?'<div style="margin-bottom:18px"><div style="font-size:13px;font-weight:600;margin-bottom:6px">\u26A1 Cross-Section Correlations</div>'+(ai.cross_section_insights||[]).map(c=>`<div style="padding:8px 12px;background:#FAFAFE;border:1px solid #E9E5FF;border-radius:6px;margin-bottom:6px;font-size:12px;color:#6B7280"><span style="font-weight:600;color:#4C1D95">${esc((c.sections||[]).join(' \u2194 '))}: </span>${esc(c.insight)}</div>`).join('')+'</div>':''}
+        ${(ai.action_plan||[]).length?'<div style="margin-bottom:18px"><div style="font-size:13px;font-weight:600;margin-bottom:6px">\u27A1 Prioritized Action Plan</div>'+(ai.action_plan||[]).map((s,i)=>`<div style="display:flex;gap:10px;padding:8px 0;${i<(ai.action_plan||[]).length-1?'border-bottom:1px solid #F3F4F6':''}"><div style="width:22px;height:22px;border-radius:50%;background:#EDE9FE;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#6D28D9;flex-shrink:0">${s.priority}</div><div><div style="font-size:13px;font-weight:500">${esc(s.action)}</div><div style="font-size:11px;color:#6B7280;margin-top:2px">Impact: ${esc(s.impact)} \u00B7 Effort: ${esc(s.effort)}</div></div></div>`).join('')+'</div>':''}
+        ${ai.whatif_narrative?`<div style="padding:12px;background:#F0FDF4;border:1px solid #BBF7D0;border-radius:8px;font-size:13px;line-height:1.6;color:#065F46"><span style="font-weight:600">\uD83D\uDEE1 What-If Projection:</span> ${esc(ai.whatif_narrative)}</div>`:''}
+      </div>
+    </div>`;
+  }
+  return h;
+}
+
 function renderDashboard(){
   const r=state.results;if(!r)return'';
   const secs=r.sections||[];const active=secs.filter(s=>s.active);const ov=r.overall||{};
@@ -166,6 +270,7 @@ function renderDashboard(){
   return `<div style="padding:32px;max-width:1200px;margin:0 auto">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;flex-wrap:wrap;gap:8px"><div><h1 style="font-size:24px;font-weight:700;margin:0">Account Health Dashboard</h1><p style="font-size:13px;color:#6B7280;margin-top:4px">${r.timestamp?new Date(r.timestamp).toLocaleString():''}</p></div><div style="display:flex;gap:8px"><button id="checklistBtn" class="btn card" style="padding:8px 16px;font-size:13px;font-weight:500">\u2611 Export Checklist</button><button id="exportBtn" class="btn card" style="padding:8px 16px;font-size:13px;font-weight:500">\u2B07 Export Report</button></div></div>
     <div class="card" style="padding:28px;display:flex;align-items:center;gap:40px;margin-bottom:28px">${renderGaugeSVG(ov.overall_score||0,140,true)}<div><h2 style="font-size:20px;font-weight:600;margin:0 0 8px">Overall Health Score</h2><div style="display:flex;gap:20px"><div><div style="font-size:22px;font-weight:700">${active.length}</div><div style="font-size:12px;color:#6B7280">Analyzed</div></div><div><div style="font-size:22px;font-weight:700;color:#059669">${active.filter(s=>(s.score||0)>=90).length}</div><div style="font-size:12px;color:#6B7280">Excellent</div></div><div><div style="font-size:22px;font-weight:700;color:#D97706">${active.filter(s=>(s.score||0)>=50&&(s.score||0)<90).length}</div><div style="font-size:12px;color:#6B7280">Needs Work</div></div><div><div style="font-size:22px;font-weight:700;color:#DC2626">${active.filter(s=>(s.score||0)<50).length}</div><div style="font-size:12px;color:#6B7280">Critical</div></div></div></div></div>
+    ${renderInsightsPanel()}
     <h3 style="font-size:16px;font-weight:600;margin:0 0 12px">Sections</h3>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-bottom:32px">${cards}</div>
     ${recs?`<h3 style="font-size:16px;font-weight:600;margin:0 0 12px">Top Recommendations</h3>${recs}`:''}

@@ -392,3 +392,165 @@ class SecurityCheckRunner(BaseCheckRunner):
             details={"source_tables": sources, "target_tables": targets, "lineage_edges": edges,
                      "summary": "Column-level lineage is being tracked"},
             recommendation=None)
+
+    # ── 5.5 Network Traffic Analysis ─────────────────────────────────
+
+    def check_5_5_1_network_denied_traffic(self) -> CheckResult:
+        """Analyze denied inbound network requests."""
+        try:
+            rows = self.executor.execute("""
+                SELECT source_ip_address, COUNT(*) AS denied_requests,
+                       MIN(event_time) AS first_seen, MAX(event_time) AS last_seen,
+                       COUNT(DISTINCT date_format(event_time, 'yyyy-MM-dd')) AS active_days
+                FROM system.access.inbound_network
+                WHERE event_time >= DATEADD(DAY, -30, CURRENT_DATE()) AND is_denied = true
+                GROUP BY source_ip_address ORDER BY denied_requests DESC LIMIT 30
+            """)
+        except Exception as e:
+            return CheckResult("5.5.1", "Denied inbound traffic (30d)", "Network Traffic Analysis",
+                0, "not_evaluated", f"Could not query inbound_network: {str(e)[:80]}", "N/A")
+
+        if not rows:
+            return CheckResult("5.5.1", "Denied inbound traffic (30d)", "Network Traffic Analysis",
+                100, "pass", "No denied inbound traffic detected or table not available", "Monitor denied requests")
+
+        total_denied = sum(int(r.get("denied_requests", 0) or 0) for r in rows)
+        unique_ips = len(rows)
+        if total_denied < 100: score, status = 90, "pass"
+        elif total_denied < 1000: score, status = 70, "partial"
+        elif unique_ips > 10: score, status = 40, "fail"
+        else: score, status = 50, "partial"
+
+        nc = [{"source_ip": r.get("source_ip_address", ""), "denied_requests": r.get("denied_requests", 0),
+               "active_days": r.get("active_days", 0), "last_seen": str(r.get("last_seen", ""))[:19]} for r in rows[:15]]
+
+        rec = None
+        if score < 90:
+            rec = Recommendation(
+                action=f"{total_denied:,} denied requests from {unique_ips} IPs in 30d. Review for potential attack patterns and update IP access lists.",
+                impact="High denied traffic may indicate unauthorized access attempts or misconfigured clients.",
+                priority="high" if unique_ips > 10 else "medium",
+                docs_url="https://docs.databricks.com/en/security/network/front-end/ip-access-list.html")
+        return CheckResult("5.5.1", "Denied inbound traffic (30d)", "Network Traffic Analysis",
+            score, status, f"{total_denied:,} denied requests from {unique_ips} unique IPs",
+            "Monitor denied requests", details={"non_conforming": nc}, recommendation=rec)
+
+    def check_5_5_2_outbound_network(self) -> CheckResult:
+        """Audit outbound network connections."""
+        try:
+            rows = self.executor.execute("""
+                SELECT destination_hostname, COUNT(*) AS connection_count,
+                       COUNT(DISTINCT source_ip_address) AS source_ips,
+                       COUNT(DISTINCT date_format(event_time, 'yyyy-MM-dd')) AS active_days
+                FROM system.access.outbound_network
+                WHERE event_time >= DATEADD(DAY, -30, CURRENT_DATE())
+                GROUP BY destination_hostname ORDER BY connection_count DESC LIMIT 30
+            """)
+        except Exception as e:
+            return CheckResult("5.5.2", "Outbound network audit (30d)", "Network Traffic Analysis",
+                0, "not_evaluated", f"Could not query outbound_network: {str(e)[:80]}", "N/A")
+
+        if not rows:
+            return CheckResult("5.5.2", "Outbound network audit (30d)", "Network Traffic Analysis",
+                None, "info", "No outbound network data available", "Review external destinations")
+
+        total_destinations = len(rows)
+        total_connections = sum(int(r.get("connection_count", 0) or 0) for r in rows)
+        nc = [{"destination": r.get("destination_hostname", ""), "connections": r.get("connection_count", 0),
+               "source_ips": r.get("source_ips", 0), "active_days": r.get("active_days", 0)} for r in rows[:20]]
+
+        return CheckResult("5.5.2", "Outbound network audit (30d)", "Network Traffic Analysis",
+            None, "info", f"{total_connections:,} connections to {total_destinations} destinations",
+            "Review external destinations",
+            details={"non_conforming": nc, "summary": "Review outbound destinations for unauthorized data exfiltration risk"},
+            recommendation=Recommendation(
+                action=f"Review {total_destinations} outbound destinations. Ensure all external endpoints are authorized.",
+                impact="Outbound network monitoring is critical for detecting data exfiltration and unauthorized API calls.",
+                priority="medium", docs_url="https://docs.databricks.com/en/security/network/classic/egress.html"))
+
+    # ── 5.6 Data Classification ──────────────────────────────────────
+
+    def check_5_6_1_data_classification_coverage(self) -> CheckResult:
+        """Check data classification coverage across tables."""
+        try:
+            rows = self.executor.execute("""
+                WITH classified AS (
+                    SELECT COUNT(DISTINCT CONCAT(catalog_name, '.', schema_name, '.', table_name)) AS classified_tables
+                    FROM system.data_classification.results
+                ),
+                total AS (
+                    SELECT COUNT(*) AS total_tables FROM system.information_schema.tables
+                    WHERE table_schema != 'information_schema'
+                )
+                SELECT c.classified_tables, t.total_tables,
+                       CASE WHEN t.total_tables > 0 THEN ROUND(c.classified_tables * 100.0 / t.total_tables, 1) ELSE 0 END AS coverage_pct
+                FROM classified c, total t
+            """)
+        except Exception as e:
+            return CheckResult("5.6.1", "Data classification coverage", "Data Classification",
+                0, "not_evaluated", f"Could not query data_classification: {str(e)[:80]}", "N/A")
+
+        if not rows:
+            return CheckResult("5.6.1", "Data classification coverage", "Data Classification",
+                None, "info", "No classification data available", ">=50% tables classified")
+
+        r = rows[0]
+        classified = int(r.get("classified_tables", 0) or 0)
+        total = int(r.get("total_tables", 0) or 0)
+        pct = float(r.get("coverage_pct", 0) or 0)
+
+        if pct >= 70: score, status = 100, "pass"
+        elif pct >= 50: score, status = 75, "partial"
+        elif pct >= 20: score, status = 50, "partial"
+        elif classified > 0: score, status = 30, "fail"
+        else: score, status = 10, "fail"
+
+        rec = None
+        if score < 100:
+            rec = Recommendation(
+                action=f"Expand data classification: {classified}/{total} tables ({pct:.0f}%) classified. Prioritize tables with customer/financial data.",
+                impact="Data classification is foundational for PII protection, GDPR/CCPA compliance, and access policy enforcement.",
+                priority="high" if pct < 20 else "medium",
+                docs_url="https://docs.databricks.com/en/data-governance/unity-catalog/data-classification.html")
+        return CheckResult("5.6.1", "Data classification coverage", "Data Classification",
+            score, status, f"{pct:.0f}% ({classified:,}/{total:,} tables classified)",
+            ">=50% tables classified", recommendation=rec)
+
+    def check_5_6_2_pii_tables_without_protection(self) -> CheckResult:
+        """Identify tables with PII that lack column masking."""
+        try:
+            rows = self.executor.execute("""
+                SELECT DISTINCT dc.catalog_name, dc.schema_name, dc.table_name, dc.column_name,
+                       dc.data_class AS classification
+                FROM system.data_classification.results dc
+                LEFT JOIN system.information_schema.column_masks cm
+                    ON dc.catalog_name = cm.table_catalog AND dc.schema_name = cm.table_schema
+                    AND dc.table_name = cm.table_name AND dc.column_name = cm.column_name
+                WHERE dc.data_class IN ('PII', 'SENSITIVE', 'EMAIL', 'PHONE', 'SSN', 'ADDRESS', 'NAME')
+                  AND cm.column_name IS NULL
+                ORDER BY dc.catalog_name, dc.schema_name, dc.table_name LIMIT 50
+            """)
+        except Exception as e:
+            return CheckResult("5.6.2", "PII columns without masking", "Data Classification",
+                0, "not_evaluated", f"Could not query: {str(e)[:80]}", "N/A")
+
+        if not rows:
+            return CheckResult("5.6.2", "PII columns without masking", "Data Classification",
+                100, "pass", "All PII columns have masking policies or no PII detected", "0 unmasked PII columns")
+
+        unique_tables = len(set(f"{r['catalog_name']}.{r['schema_name']}.{r['table_name']}" for r in rows))
+        if len(rows) <= 5: score, status = 60, "partial"
+        elif len(rows) <= 20: score, status = 35, "fail"
+        else: score, status = 15, "fail"
+
+        nc = [{"table": f"{r['catalog_name']}.{r['schema_name']}.{r['table_name']}",
+               "column": r.get("column_name", ""), "classification": r.get("classification", "")} for r in rows[:20]]
+
+        rec = Recommendation(
+            action=f"{len(rows)} PII columns across {unique_tables} tables lack masking. Apply column masks to protect sensitive data.",
+            impact="Unmasked PII columns expose the organization to data breach risk and regulatory non-compliance (GDPR, CCPA).",
+            priority="high", docs_url="https://docs.databricks.com/en/data-governance/unity-catalog/column-masking.html")
+        return CheckResult("5.6.2", "PII columns without masking", "Data Classification",
+            score, status, f"{len(rows)} PII columns in {unique_tables} tables without masking",
+            "0 unmasked PII columns", details={"non_conforming": nc}, recommendation=rec)
+

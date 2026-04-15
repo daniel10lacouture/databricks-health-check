@@ -500,3 +500,103 @@ class CostCheckRunner(BaseCheckRunner):
                 action="Monitor cost-per-query trend monthly. Rising costs may indicate inefficient queries or over-provisioned warehouses.",
                 impact="Cost-per-query is the key efficiency metric for SQL workloads.",
                 priority="low"))
+
+    # ── 4.4 Cloud Infrastructure Cost ────────────────────────────────
+
+    def check_4_4_1_total_cost_with_infra(self) -> CheckResult:
+        """Compare DBU cost vs total cost including cloud infrastructure."""
+        try:
+            rows = self.executor.execute("""
+                WITH dbu_cost AS (
+                    SELECT ROUND(SUM(u.usage_quantity * COALESCE(lp.pricing.default, 0)), 2) AS total_dbu_cost
+                    FROM system.billing.usage u
+                    LEFT JOIN system.billing.list_prices lp
+                        ON u.sku_name = lp.sku_name
+                        AND u.usage_date >= lp.price_start_time
+                        AND (lp.price_end_time IS NULL OR u.usage_date < lp.price_end_time)
+                    WHERE u.usage_date >= DATEADD(DAY, -30, CURRENT_DATE())
+                ),
+                infra_cost AS (
+                    SELECT ROUND(SUM(cost), 2) AS total_infra_cost
+                    FROM system.billing.cloud_infra_cost
+                    WHERE usage_date >= DATEADD(DAY, -30, CURRENT_DATE())
+                )
+                SELECT d.total_dbu_cost, i.total_infra_cost,
+                       ROUND(d.total_dbu_cost + COALESCE(i.total_infra_cost, 0), 2) AS true_total,
+                       CASE WHEN (d.total_dbu_cost + COALESCE(i.total_infra_cost, 0)) > 0
+                            THEN ROUND(COALESCE(i.total_infra_cost, 0) / (d.total_dbu_cost + COALESCE(i.total_infra_cost, 0)) * 100, 1)
+                            ELSE 0 END AS infra_pct
+                FROM dbu_cost d, infra_cost i
+            """)
+        except Exception as e:
+            return CheckResult("4.4.1", "Total cost incl. cloud infra (30d)", "Cloud Infrastructure Cost",
+                0, "not_evaluated", f"Could not query cloud_infra_cost: {str(e)[:80]}", "N/A")
+
+        if not rows:
+            return CheckResult("4.4.1", "Total cost incl. cloud infra (30d)", "Cloud Infrastructure Cost",
+                None, "info", "No cloud infrastructure cost data available", "Track true total cost",
+                recommendation=Recommendation(
+                    action="Enable cloud_infra_cost system table to understand true total cost beyond DBUs.",
+                    impact="Cloud VM/storage costs often add 30-60% on top of DBU spend — tracking both gives the full picture.",
+                    priority="medium"))
+
+        r = rows[0]
+        dbu = float(r.get("total_dbu_cost", 0) or 0)
+        infra = float(r.get("total_infra_cost", 0) or 0)
+        total = float(r.get("true_total", 0) or 0)
+        infra_pct = float(r.get("infra_pct", 0) or 0)
+
+        score, status = (None, "info")
+        nc = [{"dbu_cost": f"${dbu:,.2f}", "infra_cost": f"${infra:,.2f}",
+               "true_total": f"${total:,.2f}", "infra_percent": f"{infra_pct:.1f}%"}]
+
+        rec = Recommendation(
+            action=f"Cloud infra is {infra_pct:.1f}% of total spend (${infra:,.0f}/${total:,.0f}). Review VM sizing and storage to optimize the non-DBU portion.",
+            impact="Understanding true total cost enables more accurate budgeting and identifies cloud-layer optimization opportunities.",
+            priority="medium" if infra_pct > 40 else "low",
+            docs_url="https://docs.databricks.com/en/admin/system-tables/billing.html")
+        return CheckResult("4.4.1", "Total cost incl. cloud infra (30d)", "Cloud Infrastructure Cost",
+            score, status, f"${total:,.0f} total (${dbu:,.0f} DBU + ${infra:,.0f} infra, {infra_pct:.1f}% cloud)",
+            "Track true total cost", details={"non_conforming": nc}, recommendation=rec)
+
+    def check_4_4_2_cost_by_product(self) -> CheckResult:
+        """Break down cost by Databricks product (billing_origin_product)."""
+        try:
+            rows = self.executor.execute("""
+                SELECT billing_origin_product AS product,
+                       ROUND(SUM(usage_quantity), 0) AS total_dbus,
+                       COUNT(DISTINCT usage_date) AS active_days,
+                       ROUND(SUM(usage_quantity) / COUNT(DISTINCT usage_date), 0) AS avg_daily_dbus
+                FROM system.billing.usage
+                WHERE usage_date >= DATEADD(DAY, -30, CURRENT_DATE())
+                  AND billing_origin_product IS NOT NULL
+                GROUP BY billing_origin_product
+                ORDER BY total_dbus DESC
+            """)
+        except Exception as e:
+            return CheckResult("4.4.2", "Cost by product breakdown (30d)", "Cloud Infrastructure Cost",
+                0, "not_evaluated", f"Could not query: {str(e)[:80]}", "N/A")
+
+        if not rows:
+            return CheckResult("4.4.2", "Cost by product breakdown (30d)", "Cloud Infrastructure Cost",
+                None, "info", "No billing data available", "Understand product cost distribution")
+
+        total_dbus = sum(float(r.get("total_dbus", 0) or 0) for r in rows)
+        nc = [{"product": r.get("product", "unknown"),
+               "total_dbus": f"{float(r.get('total_dbus', 0) or 0):,.0f}",
+               "pct_of_total": f"{float(r.get('total_dbus', 0) or 0) / total_dbus * 100:.1f}%" if total_dbus > 0 else "0%",
+               "active_days": r.get("active_days", 0),
+               "avg_daily_dbus": f"{float(r.get('avg_daily_dbus', 0) or 0):,.0f}"} for r in rows]
+
+        top_product = rows[0].get("product", "unknown") if rows else "N/A"
+        top_pct = float(rows[0].get("total_dbus", 0) or 0) / total_dbus * 100 if total_dbus > 0 else 0
+
+        return CheckResult("4.4.2", "Cost by product breakdown (30d)", "Cloud Infrastructure Cost",
+            None, "info", f"{len(rows)} products — top: {top_product} ({top_pct:.0f}%)",
+            "Understand product cost distribution",
+            details={"non_conforming": nc, "summary": f"Total: {total_dbus:,.0f} DBUs across {len(rows)} products"},
+            recommendation=Recommendation(
+                action=f"Review product-level spend. {top_product} consumes {top_pct:.0f}% of DBUs. Look for consolidation or optimization opportunities.",
+                impact="Product-level cost visibility enables targeted optimization of the highest-spend areas.",
+                priority="low"))
+

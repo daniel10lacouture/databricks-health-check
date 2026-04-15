@@ -662,3 +662,144 @@ class DataEngineeringCheckRunner(BaseCheckRunner):
             score, status, f"{rate:.0f}% ({monitored:,} tables monitored)", "≥30% of tables monitored",
             details={"monitored_tables": nc, "summary": f"{monitored:,} tables with DQ monitoring enabled"}, recommendation=rec)
 
+    # ── 1.8 Pipeline & Task-Level Analysis ───────────────────────────
+
+    def check_1_8_1_pipeline_health(self) -> CheckResult:
+        """Analyze DLT/Lakeflow pipeline health using pipeline_update_timeline."""
+        try:
+            rows = self.executor.execute("""
+                SELECT p.pipeline_id, p.pipeline_name,
+                       COUNT(*) AS total_updates,
+                       SUM(CASE WHEN ut.state = 'COMPLETED' THEN 1 ELSE 0 END) AS succeeded,
+                       SUM(CASE WHEN ut.state = 'FAILED' THEN 1 ELSE 0 END) AS failed,
+                       ROUND(SUM(CASE WHEN ut.state = 'FAILED' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS failure_rate
+                FROM system.lakeflow.pipeline_update_timeline ut
+                JOIN system.lakeflow.pipelines p ON ut.pipeline_id = p.pipeline_id
+                WHERE ut.start_time >= DATEADD(DAY, -30, CURRENT_DATE())
+                GROUP BY p.pipeline_id, p.pipeline_name
+                ORDER BY failure_rate DESC
+            """)
+        except Exception as e:
+            return CheckResult("1.8.1", "Pipeline health (30d)", "Pipeline & Task-Level Analysis",
+                0, "not_evaluated", f"Could not query pipeline_update_timeline: {str(e)[:80]}", "N/A")
+
+        if not rows:
+            return CheckResult("1.8.1", "Pipeline health (30d)", "Pipeline & Task-Level Analysis",
+                None, "info", "No pipeline update data available", "<10% failure rate",
+                recommendation=Recommendation(
+                    action="Set up Lakeflow Declarative Pipelines for reliable, managed ETL.",
+                    impact="Declarative pipelines simplify ETL with built-in error handling and data quality.",
+                    priority="low"))
+
+        total_pipelines = len(rows)
+        failing = [r for r in rows if float(r.get("failure_rate", 0) or 0) > 10]
+        avg_failure = sum(float(r.get("failure_rate", 0) or 0) for r in rows) / total_pipelines
+
+        if len(failing) == 0: score, status = 100, "pass"
+        elif len(failing) <= total_pipelines * 0.1: score, status = 75, "partial"
+        elif avg_failure < 20: score, status = 50, "partial"
+        else: score, status = 30, "fail"
+
+        nc = [{"pipeline": r.get("pipeline_name", r.get("pipeline_id", "")),
+               "total_updates": r.get("total_updates", 0), "succeeded": r.get("succeeded", 0),
+               "failed": r.get("failed", 0),
+               "failure_rate": f"{float(r.get('failure_rate', 0) or 0):.1f}%"} for r in failing[:15]]
+
+        rec = None
+        if score < 100:
+            rec = Recommendation(
+                action=f"{len(failing)}/{total_pipelines} pipelines have >10% failure rate (avg {avg_failure:.1f}%). Investigate root causes in failed updates.",
+                impact="Failing pipelines cause data staleness, SLA breaches, and downstream quality issues.",
+                priority="high" if avg_failure > 20 else "medium",
+                docs_url="https://docs.databricks.com/en/delta-live-tables/observability.html")
+        return CheckResult("1.8.1", "Pipeline health (30d)", "Pipeline & Task-Level Analysis",
+            score, status, f"{total_pipelines} pipelines — {len(failing)} with >10% failure (avg {avg_failure:.1f}%)",
+            "<10% failure rate", details={"non_conforming": nc}, recommendation=rec)
+
+    def check_1_8_2_task_bottlenecks(self) -> CheckResult:
+        """Identify slow tasks using job_task_run_timeline."""
+        try:
+            rows = self.executor.execute("""
+                SELECT job_id, task_key,
+                       COUNT(*) AS runs,
+                       ROUND(AVG(TIMESTAMPDIFF(SECOND, start_time, end_time)) / 60.0, 1) AS avg_duration_min,
+                       ROUND(MAX(TIMESTAMPDIFF(SECOND, start_time, end_time)) / 60.0, 1) AS max_duration_min,
+                       ROUND(PERCENTILE_APPROX(TIMESTAMPDIFF(SECOND, start_time, end_time) / 60.0, 0.95), 1) AS p95_duration_min
+                FROM system.lakeflow.job_task_run_timeline
+                WHERE start_time >= DATEADD(DAY, -14, CURRENT_DATE())
+                  AND result_state IS NOT NULL
+                GROUP BY job_id, task_key
+                HAVING AVG(TIMESTAMPDIFF(SECOND, start_time, end_time)) > 600
+                ORDER BY avg_duration_min DESC LIMIT 30
+            """)
+        except Exception as e:
+            return CheckResult("1.8.2", "Task bottlenecks (14d)", "Pipeline & Task-Level Analysis",
+                0, "not_evaluated", f"Could not query job_task_run_timeline: {str(e)[:80]}", "N/A")
+
+        if not rows:
+            return CheckResult("1.8.2", "Task bottlenecks (14d)", "Pipeline & Task-Level Analysis",
+                100, "pass", "No tasks averaging >10 min detected", "Tasks avg <10 min")
+
+        severe = [r for r in rows if float(r.get("avg_duration_min", 0) or 0) > 30]
+        if len(rows) <= 3: score, status = 70, "partial"
+        elif len(severe) > 5: score, status = 30, "fail"
+        elif len(rows) > 10: score, status = 40, "fail"
+        else: score, status = 50, "partial"
+
+        nc = [{"job_id": r.get("job_id", ""), "task_key": r.get("task_key", ""),
+               "runs": r.get("runs", 0), "avg_min": r.get("avg_duration_min", 0),
+               "p95_min": r.get("p95_duration_min", 0), "max_min": r.get("max_duration_min", 0)} for r in rows[:15]]
+
+        rec = Recommendation(
+            action=f"{len(rows)} tasks average >10 min ({len(severe)} over 30 min). Review for partition pruning, caching, or cluster right-sizing.",
+            impact="Long-running tasks are pipeline bottlenecks that delay downstream data freshness and increase compute cost.",
+            priority="high" if len(severe) > 3 else "medium",
+            docs_url="https://docs.databricks.com/en/jobs/index.html")
+        return CheckResult("1.8.2", "Task bottlenecks (14d)", "Pipeline & Task-Level Analysis",
+            score, status, f"{len(rows)} slow tasks (>10 min avg), {len(severe)} severe (>30 min)",
+            "Tasks avg <10 min", details={"non_conforming": nc}, recommendation=rec)
+
+    def check_1_8_3_storage_growth(self) -> CheckResult:
+        """Detect tables with rapid storage growth using table_metrics_history."""
+        try:
+            rows = self.executor.execute("""
+                WITH recent AS (
+                    SELECT catalog_name, schema_name, table_name,
+                           MIN(total_size_bytes) AS earliest_size, MAX(total_size_bytes) AS latest_size,
+                           MIN(snapshot_date) AS first_date, MAX(snapshot_date) AS last_date
+                    FROM system.storage.table_metrics_history
+                    WHERE snapshot_date >= DATEADD(DAY, -30, CURRENT_DATE())
+                    GROUP BY catalog_name, schema_name, table_name
+                    HAVING MIN(total_size_bytes) > 1073741824 AND MAX(snapshot_date) > MIN(snapshot_date)
+                )
+                SELECT *, ROUND((latest_size - earliest_size) * 100.0 / NULLIF(earliest_size, 0), 1) AS growth_pct,
+                       ROUND(latest_size / 1073741824.0, 2) AS current_gb
+                FROM recent
+                WHERE (latest_size - earliest_size) * 100.0 / NULLIF(earliest_size, 0) > 50
+                ORDER BY (latest_size - earliest_size) DESC LIMIT 25
+            """)
+        except Exception as e:
+            return CheckResult("1.8.3", "Storage growth (30d)", "Pipeline & Task-Level Analysis",
+                0, "not_evaluated", f"Could not query table_metrics_history: {str(e)[:80]}", "N/A")
+
+        if not rows:
+            return CheckResult("1.8.3", "Storage growth (30d)", "Pipeline & Task-Level Analysis",
+                100, "pass", "No tables growing >50% in 30 days", "<50% monthly growth for tables >1GB")
+
+        if len(rows) <= 3: score, status = 70, "partial"
+        elif len(rows) <= 10: score, status = 50, "partial"
+        else: score, status = 30, "fail"
+
+        nc = [{"table": f"{r['catalog_name']}.{r['schema_name']}.{r['table_name']}",
+               "current_gb": r.get("current_gb", 0),
+               "growth_pct": f"{float(r.get('growth_pct', 0) or 0):.1f}%"} for r in rows[:15]]
+
+        rec = Recommendation(
+            action=f"{len(rows)} tables >1GB grew over 50% in 30 days. Review for runaway ingestion, missing cleanup, or partition explosion.",
+            impact="Uncontrolled storage growth increases cloud storage cost and degrades query performance.",
+            priority="high" if len(rows) > 5 else "medium",
+            docs_url="https://docs.databricks.com/en/delta/best-practices.html")
+        return CheckResult("1.8.3", "Storage growth (30d)", "Pipeline & Task-Level Analysis",
+            score, status, f"{len(rows)} tables growing >50%/month",
+            "<50% monthly growth for tables >1GB", details={"non_conforming": nc}, recommendation=rec)
+

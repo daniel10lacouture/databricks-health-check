@@ -126,6 +126,8 @@ def run_health_check(warehouse_id: str, include_table_analysis: bool, user_token
     from checks.base import QueryExecutor, APIClient
     from scoring import compute_overall_score
     from recommendations import get_top_recommendations
+    from insights import generate_all_insights
+    from genai_insights import GenAIInsights
 
     try:
         token = user_token or get_token()
@@ -209,10 +211,32 @@ def run_health_check(warehouse_id: str, include_table_analysis: bool, user_token
         overall = compute_overall_score(section_results)
         top_recs = get_top_recommendations(section_results, limit=10)
 
+        # Pillar 2: Generate insights (trends, anomalies, maturity, what-if)
+        try:
+            insights_data = generate_all_insights(
+                overall.get("overall_score"), section_results, executor)
+        except Exception as ie:
+            logger.warning(f"Insights generation failed (non-blocking): {ie}")
+            insights_data = {}
+
+        # Pillar 3: Generate GenAI insights (non-blocking)
+        ai_insights = {}
+        try:
+            host = get_host()
+            genai = GenAIInsights(host, token)
+            ai_insights = genai.generate(
+                {"overall": overall, "sections": section_results, "top_recommendations": top_recs},
+                insights_data)
+        except Exception as ge:
+            logger.warning(f"GenAI insights failed (non-blocking): {ge}")
+            ai_insights = {"error": str(ge)}
+
         final = {
             "overall": overall,
             "sections": section_results,
             "top_recommendations": top_recs,
+            "insights": insights_data,
+            "ai_insights": ai_insights,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "diagnostics": {
                 "query_stats": executor.stats,
@@ -561,6 +585,31 @@ def export_pdf():
     html_parts.append("</body></html>")
     return Response("".join(html_parts), mimetype="text/html",
         headers={"Content-Disposition": f"attachment; filename=health_check_report_{ts[:10]}.html"})
+
+
+# ── AI Insights (on-demand re-generation) ─────────────────────────────
+
+@app.route("/api/ai-insights", methods=["POST"])
+def regenerate_ai_insights():
+    with state_lock:
+        results = health_check_state["results"]
+    if results is None:
+        return jsonify({"error": "No results available. Run a health check first."}), 404
+    user_token = request.headers.get("x-forwarded-access-token")
+    if not user_token:
+        return jsonify({"error": "No user authorization token."}), 401
+    try:
+        host = get_host()
+        genai = GenAIInsights(host, user_token)
+        insights_data = results.get("insights", {})
+        ai_insights = genai.generate(results, insights_data)
+        with state_lock:
+            if health_check_state["results"]:
+                health_check_state["results"]["ai_insights"] = ai_insights
+        return jsonify(ai_insights)
+    except Exception as e:
+        logger.error(f"AI insights regeneration failed: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
 
 
 # ── Debug / Health ─────────────────────────────────────────────────────

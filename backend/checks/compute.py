@@ -333,3 +333,107 @@ class ComputeCheckRunner(BaseCheckRunner):
             score, status, f"{rate:.1f}% of compute DBUs ({photon:,.0f}/{total:,.0f})", "≥50% Photon",
             details={"sku_breakdown": nc}, recommendation=rec)
 
+    # ── 3.6 Compute Utilization (Node-Level) ─────────────────────────
+
+    def check_3_6_1_cpu_utilization(self) -> CheckResult:
+        """Analyze CPU utilization across clusters using node_timeline."""
+        try:
+            rows = self.executor.execute("""
+                SELECT cluster_id,
+                       ROUND(AVG(cpu_user_percent + cpu_system_percent), 1) AS avg_cpu_pct,
+                       ROUND(MAX(cpu_user_percent + cpu_system_percent), 1) AS max_cpu_pct,
+                       COUNT(DISTINCT date_format(start_time, 'yyyy-MM-dd')) AS days_observed
+                FROM system.compute.node_timeline
+                WHERE start_time >= DATEADD(DAY, -14, CURRENT_DATE())
+                GROUP BY cluster_id
+                HAVING COUNT(*) >= 10
+                ORDER BY avg_cpu_pct ASC LIMIT 50
+            """)
+        except Exception as e:
+            return CheckResult("3.6.1", "CPU utilization (14d)", "Compute Utilization",
+                0, "not_evaluated", f"Could not query node_timeline: {str(e)[:80]}", "N/A")
+
+        if not rows:
+            return CheckResult("3.6.1", "CPU utilization (14d)", "Compute Utilization",
+                None, "info", "No node_timeline data available", "Avg CPU 20-80%",
+                recommendation=Recommendation(
+                    action="Enable system tables for compute.node_timeline to track CPU utilization.",
+                    impact="CPU monitoring enables right-sizing clusters to reduce cost and improve performance.",
+                    priority="low"))
+
+        avg_all = sum(float(r.get("avg_cpu_pct", 0) or 0) for r in rows) / len(rows)
+        under_utilized = [r for r in rows if float(r.get("avg_cpu_pct", 0) or 0) < 20]
+        over_utilized = [r for r in rows if float(r.get("avg_cpu_pct", 0) or 0) > 85]
+
+        if len(under_utilized) == 0 and len(over_utilized) == 0: score, status = 100, "pass"
+        elif len(under_utilized) + len(over_utilized) <= len(rows) * 0.2: score, status = 70, "partial"
+        elif len(under_utilized) > len(rows) * 0.3: score, status = 40, "fail"
+        else: score, status = 50, "partial"
+
+        nc = [{"cluster_id": r["cluster_id"], "avg_cpu_pct": r["avg_cpu_pct"],
+               "max_cpu_pct": r["max_cpu_pct"], "days_observed": r["days_observed"],
+               "issue": "Under-utilized" if float(r.get("avg_cpu_pct", 0) or 0) < 20 else "Over-utilized"}
+              for r in (under_utilized + over_utilized)[:20]]
+
+        rec = None
+        if score < 100:
+            rec = Recommendation(
+                action=f"Right-size clusters: {len(under_utilized)} under-utilized (<20% CPU), {len(over_utilized)} over-utilized (>85% CPU). Average CPU across fleet: {avg_all:.1f}%.",
+                impact="Right-sizing eliminates wasted compute spend on idle resources and prevents bottlenecks on overloaded clusters.",
+                priority="high" if len(under_utilized) > 3 else "medium",
+                docs_url="https://docs.databricks.com/en/compute/cluster-config-best-practices.html")
+        return CheckResult("3.6.1", "CPU utilization (14d)", "Compute Utilization",
+            score, status, f"Fleet avg {avg_all:.1f}% CPU — {len(under_utilized)} under, {len(over_utilized)} over-utilized",
+            "Avg CPU 20-80%", details={"non_conforming": nc}, recommendation=rec)
+
+    def check_3_6_2_memory_utilization(self) -> CheckResult:
+        """Analyze memory utilization across clusters using node_timeline."""
+        try:
+            rows = self.executor.execute("""
+                SELECT cluster_id,
+                       ROUND(AVG(memory_used_percent), 1) AS avg_mem_pct,
+                       ROUND(MAX(memory_used_percent), 1) AS max_mem_pct,
+                       COUNT(DISTINCT date_format(start_time, 'yyyy-MM-dd')) AS days_observed
+                FROM system.compute.node_timeline
+                WHERE start_time >= DATEADD(DAY, -14, CURRENT_DATE())
+                GROUP BY cluster_id
+                HAVING COUNT(*) >= 10
+                ORDER BY avg_mem_pct ASC LIMIT 50
+            """)
+        except Exception as e:
+            return CheckResult("3.6.2", "Memory utilization (14d)", "Compute Utilization",
+                0, "not_evaluated", f"Could not query node_timeline: {str(e)[:80]}", "N/A")
+
+        if not rows:
+            return CheckResult("3.6.2", "Memory utilization (14d)", "Compute Utilization",
+                None, "info", "No node_timeline data available", "Avg memory 25-85%",
+                recommendation=Recommendation(
+                    action="Enable system tables for compute.node_timeline to track memory utilization.",
+                    impact="Memory monitoring prevents OOM errors and identifies over-provisioned clusters.",
+                    priority="low"))
+
+        avg_all = sum(float(r.get("avg_mem_pct", 0) or 0) for r in rows) / len(rows)
+        under = [r for r in rows if float(r.get("avg_mem_pct", 0) or 0) < 25]
+        over = [r for r in rows if float(r.get("avg_mem_pct", 0) or 0) > 85]
+
+        if len(under) == 0 and len(over) == 0: score, status = 100, "pass"
+        elif len(under) + len(over) <= len(rows) * 0.2: score, status = 70, "partial"
+        elif len(over) > len(rows) * 0.2: score, status = 40, "fail"
+        else: score, status = 50, "partial"
+
+        nc = [{"cluster_id": r["cluster_id"], "avg_mem_pct": r["avg_mem_pct"],
+               "max_mem_pct": r["max_mem_pct"], "days_observed": r["days_observed"],
+               "issue": "Under-utilized" if float(r.get("avg_mem_pct", 0) or 0) < 25 else "Over-utilized (OOM risk)"}
+              for r in (under + over)[:20]]
+
+        rec = None
+        if score < 100:
+            rec = Recommendation(
+                action=f"Adjust cluster memory: {len(under)} under-utilized (<25%), {len(over)} at risk (>85%). Consider memory-optimized instances for high-memory workloads.",
+                impact="Memory right-sizing prevents OOM failures and reduces cost from over-provisioned instances.",
+                priority="high" if len(over) > 2 else "medium",
+                docs_url="https://docs.databricks.com/en/compute/cluster-config-best-practices.html")
+        return CheckResult("3.6.2", "Memory utilization (14d)", "Compute Utilization",
+            score, status, f"Fleet avg {avg_all:.1f}% memory — {len(under)} under, {len(over)} over-utilized",
+            "Avg memory 25-85%", details={"non_conforming": nc}, recommendation=rec)
+

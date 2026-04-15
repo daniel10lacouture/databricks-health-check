@@ -386,3 +386,51 @@ class SQLAnalyticsCheckRunner(BaseCheckRunner):
             score, status, f"{rate:.1f}% ({errors:,}/{total:,} queries)", "≤2% error rate",
             details={"top_error_patterns": nc}, recommendation=rec)
 
+    # ── 2.7 Warehouse Scaling Efficiency ─────────────────────────────
+
+    def check_2_7_1_warehouse_scaling_efficiency(self) -> CheckResult:
+        """Analyze warehouse scaling patterns from warehouse_events."""
+        try:
+            rows = self.executor.execute("""
+                SELECT warehouse_id,
+                       SUM(CASE WHEN event_type = 'SCALED_UP' THEN 1 ELSE 0 END) AS scale_ups,
+                       SUM(CASE WHEN event_type = 'SCALED_DOWN' THEN 1 ELSE 0 END) AS scale_downs,
+                       SUM(CASE WHEN event_type = 'QUEUED' THEN 1 ELSE 0 END) AS queue_events,
+                       SUM(CASE WHEN event_type = 'STARTING' THEN 1 ELSE 0 END) AS starts,
+                       COUNT(*) AS total_events
+                FROM system.compute.warehouse_events
+                WHERE event_time >= DATEADD(DAY, -14, CURRENT_DATE())
+                GROUP BY warehouse_id ORDER BY queue_events DESC
+            """)
+        except Exception as e:
+            return CheckResult("2.7.1", "Warehouse scaling efficiency (14d)", "Warehouse Scaling Efficiency",
+                0, "not_evaluated", f"Could not query warehouse_events: {str(e)[:80]}", "N/A")
+
+        if not rows:
+            return CheckResult("2.7.1", "Warehouse scaling efficiency (14d)", "Warehouse Scaling Efficiency",
+                None, "info", "No warehouse events data available", "Minimal queueing events")
+
+        total_queues = sum(int(r.get("queue_events", 0) or 0) for r in rows)
+        total_scale_ups = sum(int(r.get("scale_ups", 0) or 0) for r in rows)
+        heavy_queueing = [r for r in rows if int(r.get("queue_events", 0) or 0) > 50]
+
+        if total_queues == 0: score, status = 100, "pass"
+        elif len(heavy_queueing) == 0: score, status = 85, "pass"
+        elif len(heavy_queueing) <= 2: score, status = 60, "partial"
+        else: score, status = 35, "fail"
+
+        nc = [{"warehouse_id": r.get("warehouse_id", ""), "scale_ups": r.get("scale_ups", 0),
+               "scale_downs": r.get("scale_downs", 0), "queue_events": r.get("queue_events", 0),
+               "starts": r.get("starts", 0)} for r in rows[:15]]
+
+        rec = None
+        if score < 85:
+            rec = Recommendation(
+                action=f"{total_queues:,} queueing events across {len(heavy_queueing)} warehouses. Increase max_num_clusters or consider serverless for elastic scaling.",
+                impact="Query queueing degrades user experience and dashboard refresh times. Proper scaling eliminates wait times.",
+                priority="high" if len(heavy_queueing) > 2 else "medium",
+                docs_url="https://docs.databricks.com/en/sql/admin/warehouse-type.html")
+        return CheckResult("2.7.1", "Warehouse scaling efficiency (14d)", "Warehouse Scaling Efficiency",
+            score, status, f"{total_queues:,} queue events, {total_scale_ups:,} scale-ups across {len(rows)} warehouses",
+            "Minimal queueing events", details={"non_conforming": nc}, recommendation=rec)
+
