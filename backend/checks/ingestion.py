@@ -74,3 +74,73 @@ class IngestionCheckRunner(BaseCheckRunner):
             f"{pct:.0f}% success rate ({success}/{total})",
             ">95% success", recommendation=rec)
 
+    # ── Tier 1: Lakeflow Connector Adoption ──────────────────────────
+
+    def check_11_3_1_connector_adoption(self):
+        """Tier 1: 72% managed connectors (1,239/1,730)."""
+        try:
+            rows = self.executor.execute("""
+                SELECT connection_type, COUNT(*) AS cnt
+                FROM system.information_schema.connections
+                GROUP BY 1 ORDER BY cnt DESC
+            """)
+        except Exception:
+            return CheckResult("11.3.1", "Lakeflow Connector adoption", "Connector Inventory",
+                0, "not_evaluated", "system.information_schema.connections not available", "N/A")
+
+        total = sum(r["cnt"] for r in rows)
+        if total == 0:
+            return CheckResult("11.3.1", "Lakeflow Connector adoption", "Connector Inventory",
+                0, "not_evaluated", "No connections found", "N/A")
+
+        managed_types = ['DATABRICKS', 'LAKEHOUSE_FEDERATION', 'ONLINE_TABLE', 'DELTA_SHARING']
+        managed = sum(r["cnt"] for r in rows if any(mt in (r.get("connection_type") or "").upper() for mt in managed_types))
+        rate = managed / max(total, 1) * 100
+
+        if rate >= 70: score, status = 100, "pass"
+        elif rate >= 40: score, status = 50, "partial"
+        else: score, status = 0, "fail"
+
+        nc = [{"connection_type": r["connection_type"], "count": r["cnt"],
+               "pct": f"{r['cnt']/max(total,1)*100:.1f}%"} for r in rows]
+        rec = None
+        if score < 100:
+            rec = Recommendation(
+                action=f"Increase managed connector usage. Currently {managed}/{total} ({rate:.0f}%) use managed connections.",
+                impact="Managed connectors provide centralized governance, credential management, and monitoring.",
+                priority="medium")
+        return CheckResult("11.3.1", "Lakeflow Connector adoption", "Connector Inventory",
+            score, status, f"{rate:.0f}% managed ({managed:,}/{total:,})", "≥70% managed connectors",
+            details={"connector_types": nc}, recommendation=rec)
+
+    # ── Tier 2: Streaming Pipeline Inventory ─────────────────────────
+
+    def check_11_3_2_streaming_pipeline_inventory(self):
+        """Tier 2: 788 streaming pipelines (437 ST, 278 ingestion, 73 gateway)."""
+        try:
+            rows = self.executor.execute("""
+                SELECT pipeline_type, state, COUNT(*) AS cnt
+                FROM system.lakeflow.pipelines
+                GROUP BY 1, 2 ORDER BY cnt DESC
+            """)
+        except Exception:
+            return CheckResult("11.3.2", "Streaming pipeline inventory", "Streaming Pipelines",
+                0, "not_evaluated", "system.lakeflow.pipelines not available", "N/A")
+
+        total = sum(r["cnt"] for r in rows)
+        by_type = {}
+        for r in rows:
+            t = r.get("pipeline_type", "UNKNOWN")
+            by_type[t] = by_type.get(t, 0) + r["cnt"]
+
+        type_detail = [{"pipeline_type": t, "count": c} for t, c in sorted(by_type.items(), key=lambda x: -x[1])]
+
+        # Check for failed pipelines
+        failed = sum(r["cnt"] for r in rows if r.get("state") in ("FAILED", "ERROR"))
+        failed_rate = failed / max(total, 1) * 100
+
+        return CheckResult("11.3.2", "Streaming pipeline inventory", "Streaming Pipelines",
+            0, "info", f"{total} pipelines ({len(by_type)} types)", "N/A",
+            details={"pipeline_types": type_detail,
+                     "state_breakdown": [{"pipeline_type": r.get("pipeline_type"), "state": r.get("state"), "count": r["cnt"]} for r in rows[:20]]})
+

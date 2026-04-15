@@ -292,3 +292,44 @@ class ComputeCheckRunner(BaseCheckRunner):
                 impact="Right-sizing eliminates wasted compute. A cluster at 15% CPU could use a 50% smaller instance type.",
                 priority="high" if len(oversized) > 5 else "medium",
                 docs_url="https://docs.databricks.com/en/compute/configure.html"))
+
+    # ── Tier 1: Photon Adoption ──────────────────────────────────────
+
+    def check_3_5_1_photon_adoption(self):
+        """Tier 1: Only 0.3% of DBUs use Photon."""
+        rows = self.executor.execute("""
+            SELECT CASE WHEN sku_name LIKE '%PHOTON%' THEN 'Photon' ELSE 'Non-Photon' END AS compute_type,
+                   ROUND(SUM(usage_quantity), 0) AS dbus
+            FROM system.billing.usage
+            WHERE usage_date >= DATEADD(DAY, -30, CURRENT_DATE())
+              AND (sku_name LIKE '%ALL_PURPOSE%' OR sku_name LIKE '%JOBS%' OR sku_name LIKE '%SQL%')
+            GROUP BY 1
+        """)
+        photon = next((r["dbus"] for r in rows if r["compute_type"] == "Photon"), 0) or 0
+        total = sum((r["dbus"] or 0) for r in rows)
+        rate = photon / max(total, 1) * 100
+        if rate >= 50: score, status = 100, "pass"
+        elif rate >= 20: score, status = 50, "partial"
+        else: score, status = 0, "fail"
+
+        sku_detail = self.executor.execute("""
+            SELECT sku_name,
+                   ROUND(SUM(usage_quantity), 0) AS dbus,
+                   CASE WHEN sku_name LIKE '%PHOTON%' THEN 'Photon' ELSE 'Standard' END AS engine
+            FROM system.billing.usage
+            WHERE usage_date >= DATEADD(DAY, -30, CURRENT_DATE())
+              AND (sku_name LIKE '%ALL_PURPOSE%' OR sku_name LIKE '%JOBS%' OR sku_name LIKE '%SQL%')
+            GROUP BY 1 ORDER BY dbus DESC LIMIT 15
+        """)
+        nc = sku_detail if sku_detail else [{"status": f"Photon: {rate:.1f}%"}]
+        rec = None
+        if score < 100:
+            rec = Recommendation(
+                action=f"Increase Photon adoption from {rate:.1f}% to improve query and ETL performance. Enable Photon on existing clusters and warehouses.",
+                impact="Photon accelerates SQL and Spark workloads 2-8x with no code changes.",
+                priority="medium",
+                docs_url="https://docs.databricks.com/en/compute/photon.html")
+        return CheckResult("3.5.1", "Photon adoption (30d)", "Resource Utilization",
+            score, status, f"{rate:.1f}% of compute DBUs ({photon:,.0f}/{total:,.0f})", "≥50% Photon",
+            details={"sku_breakdown": nc}, recommendation=rec)
+

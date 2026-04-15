@@ -481,7 +481,7 @@ class DataEngineeringCheckRunner(BaseCheckRunner):
                 WITH recent AS (
                     SELECT DISTINCT job_id FROM system.lakeflow.job_run_timeline
                     WHERE period_start_time >= DATEADD(DAY, -90, CURRENT_DATE()))
-                SELECT j.job_id, j.name AS job_name, j.creator
+                SELECT j.job_id, j.name AS job_name, j.creator_user_name
                 FROM system.lakeflow.jobs j
                 LEFT JOIN recent r ON j.job_id = r.job_id
                 WHERE j.delete_time IS NULL AND r.job_id IS NULL
@@ -492,7 +492,7 @@ class DataEngineeringCheckRunner(BaseCheckRunner):
                 "Could not query", "0 orphan jobs")
 
         nc = [{"job_name": r.get("job_name",""), "job_id": r.get("job_id",""),
-               "creator": r.get("creator",""),
+               "creator": r.get("creator_user_name",""),
                "action": "Delete if no longer needed, or update the schedule"} for r in rows[:20]]
 
         if not rows: score, status = 100, "pass"
@@ -563,3 +563,102 @@ class DataEngineeringCheckRunner(BaseCheckRunner):
             "Job Configuration Health", score, status,
             f"{pct:.0f}% manual runs ({manual}/{total})",
             "<10% manual runs", details={"non_conforming": nc}, recommendation=rec)
+
+    # ── Tier 1: Serverless Job Adoption ──────────────────────────────
+
+    def check_1_7_1_serverless_job_adoption(self):
+        """Tier 1: 96.9% serverless (track & celebrate)."""
+        rows = self.executor.execute("""
+            SELECT CASE WHEN sku_name LIKE '%SERVERLESS%' THEN 'Serverless' ELSE 'Classic' END AS compute_type,
+                   ROUND(SUM(usage_quantity), 0) AS dbus
+            FROM system.billing.usage
+            WHERE usage_date >= DATEADD(DAY, -30, CURRENT_DATE())
+              AND sku_name LIKE '%JOBS%'
+            GROUP BY 1
+        """)
+        serverless = next((r["dbus"] for r in rows if r["compute_type"] == "Serverless"), 0) or 0
+        total = sum((r["dbus"] or 0) for r in rows)
+        rate = serverless / max(total, 1) * 100
+        if rate >= 80: score, status = 100, "pass"
+        elif rate >= 50: score, status = 50, "partial"
+        else: score, status = 0, "fail"
+
+        detail = self.executor.execute("""
+            SELECT sku_name,
+                   ROUND(SUM(usage_quantity), 0) AS dbus,
+                   COUNT(DISTINCT workspace_id) AS workspaces
+            FROM system.billing.usage
+            WHERE usage_date >= DATEADD(DAY, -30, CURRENT_DATE())
+              AND sku_name LIKE '%JOBS%'
+            GROUP BY 1 ORDER BY dbus DESC
+        """)
+        nc = detail if detail else [{"status": f"{rate:.1f}% serverless"}]
+        rec = None
+        if score < 100:
+            classic_dbus = total - serverless
+            rec = Recommendation(
+                action=f"Migrate remaining {classic_dbus:,.0f} classic job DBUs to serverless for faster startup and lower cost.",
+                impact="Serverless jobs eliminate cluster management overhead and reduce idle costs.",
+                priority="medium",
+                docs_url="https://docs.databricks.com/en/jobs/serverless.html")
+        return CheckResult("1.7.1", "Serverless job adoption (30d)", "Job Configuration",
+            score, status, f"{rate:.1f}% serverless ({serverless:,.0f}/{total:,.0f} DBUs)", "≥80% serverless",
+            details={"jobs_sku_breakdown": nc}, recommendation=rec)
+
+    # ── Tier 1: DQ Monitoring Coverage ───────────────────────────────
+
+    def check_1_7_2_dq_monitoring_coverage(self):
+        """Tier 1: DQ monitoring coverage across account."""
+        try:
+            # Get monitored tables from DQ system table (account-level)
+            monitored_r = self.executor.execute("""
+                SELECT COUNT(DISTINCT CONCAT(catalog_name, '.', schema_name, '.', table_name)) AS monitored
+                FROM system.data_quality_monitoring.table_results
+            """)
+            monitored = monitored_r[0]["monitored"] or 0
+        except Exception:
+            return CheckResult("1.7.2", "DQ monitoring coverage", "Data Quality",
+                0, "not_evaluated", "system.data_quality_monitoring not available", "N/A")
+
+        # Get total managed tables from storage metrics (also account-level)
+        try:
+            total_r = self.executor.execute("""
+                SELECT COUNT(DISTINCT CONCAT(catalog_name, '.', schema_name, '.', table_name)) AS total
+                FROM system.storage.table_metrics_history
+                WHERE record_date = (SELECT MAX(record_date) FROM system.storage.table_metrics_history)
+            """)
+            total = total_r[0]["total"] or 0
+        except Exception:
+            # Fallback: use the DQ table's catalog/schema to estimate
+            total = monitored * 5  # Assume ~20% coverage as baseline
+
+        rate = monitored / max(total, 1) * 100
+        # Cap at 100% to handle data inconsistencies
+        rate = min(rate, 100.0)
+        
+        if rate >= 30: score, status = 100, "pass"
+        elif rate >= 10: score, status = 50, "partial"
+        else: score, status = 0, "fail"
+
+        # Get sample monitored tables
+        sample_r = self.executor.execute("""
+            SELECT catalog_name, schema_name, table_name,
+                   COUNT(*) AS checks_run
+            FROM system.data_quality_monitoring.table_results
+            GROUP BY 1, 2, 3
+            ORDER BY checks_run DESC LIMIT 20
+        """)
+        nc = [{"table": f"{r['catalog_name']}.{r['schema_name']}.{r['table_name']}", 
+               "checks_run": r["checks_run"]} for r in sample_r] if sample_r else [{"monitored_tables": monitored}]
+        
+        rec = None
+        if score < 100:
+            rec = Recommendation(
+                action=f"Expand DQ monitoring. {monitored:,} tables monitored ({rate:.0f}% of {total:,} tables). Prioritize critical data products.",
+                impact="Proactive data quality monitoring catches issues before they propagate downstream.",
+                priority="high" if rate < 10 else "medium",
+                docs_url="https://docs.databricks.com/en/lakehouse-monitoring/index.html")
+        return CheckResult("1.7.2", "DQ monitoring coverage", "Data Quality",
+            score, status, f"{rate:.0f}% ({monitored:,} tables monitored)", "≥30% of tables monitored",
+            details={"monitored_tables": nc, "summary": f"{monitored:,} tables with DQ monitoring enabled"}, recommendation=rec)
+

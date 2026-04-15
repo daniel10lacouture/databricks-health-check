@@ -346,3 +346,43 @@ class SQLAnalyticsCheckRunner(BaseCheckRunner):
             "Semantic Layer & Data Modeling", score, status,
             f"{count} materialized/metric views", "Business metrics defined as views",
             details={"non_conforming": nc}, recommendation=rec)
+
+    # ── Tier 1: Query Error Rate ─────────────────────────────────────
+
+    def check_2_6_1_query_error_rate(self):
+        """Tier 1: 495K failed queries/week (4% failure rate)."""
+        rows = self.executor.execute("""
+            SELECT COUNT(*) AS total,
+                   SUM(CASE WHEN execution_status = 'FAILED' THEN 1 ELSE 0 END) AS errors
+            FROM system.query.history
+            WHERE start_time >= DATEADD(DAY, -7, CURRENT_DATE())
+        """)
+        total = rows[0]["total"] or 0
+        errors = rows[0]["errors"] or 0
+        rate = errors / max(total, 1) * 100
+        if rate <= 2: score, status = 100, "pass"
+        elif rate <= 5: score, status = 50, "partial"
+        else: score, status = 0, "fail"
+
+        top_errors = self.executor.execute("""
+            SELECT SUBSTRING(error_message, 1, 120) AS error_pattern,
+                   COUNT(*) AS occurrences,
+                   COUNT(DISTINCT user_name) AS affected_users,
+                   COUNT(DISTINCT compute.warehouse_id) AS warehouses
+            FROM system.query.history
+            WHERE start_time >= DATEADD(DAY, -7, CURRENT_DATE())
+              AND execution_status = 'FAILED' AND error_message IS NOT NULL
+            GROUP BY 1 ORDER BY occurrences DESC LIMIT 15
+        """)
+        nc = top_errors if top_errors else [{"status": "Healthy", "error_rate": f"{rate:.1f}%"}]
+        rec = None
+        if score < 100:
+            rec = Recommendation(
+                action=f"Investigate {errors:,} query errors this week ({rate:.1f}% error rate). Focus on the top error patterns affecting the most users.",
+                impact="Query errors indicate broken dashboards, stale views, or permission issues that degrade user trust.",
+                priority="high" if rate > 5 else "medium",
+                docs_url="https://docs.databricks.com/en/sql/admin/query-history.html")
+        return CheckResult("2.6.1", "Query error rate (7d)", "Query Performance",
+            score, status, f"{rate:.1f}% ({errors:,}/{total:,} queries)", "≤2% error rate",
+            details={"top_error_patterns": nc}, recommendation=rec)
+

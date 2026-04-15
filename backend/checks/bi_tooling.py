@@ -163,3 +163,97 @@ class BIToolingCheckRunner(BaseCheckRunner):
             "Developer Tooling", 0, "info",
             f"{len(rows)} developer tools active in last 30 days",
             "Informational", details=details)
+    def check_14_1_4_warehouse_bi_usage(self) -> CheckResult:
+        """Show which warehouses power AI/BI Dashboards and Genie spaces."""
+        try:
+            rows = self.executor.execute("""
+                SELECT w.name AS warehouse_name,
+                       w.warehouse_type,
+                       w.enable_serverless_compute AS serverless,
+                       COUNT(CASE WHEN q.client_application = 'Databricks SQL Dashboard' THEN 1 END) AS dashboard_queries,
+                       COUNT(CASE WHEN q.client_application = 'Databricks SQL Genie Space' THEN 1 END) AS genie_queries,
+                       COUNT(DISTINCT CASE WHEN q.client_application IN ('Databricks SQL Dashboard', 'Databricks SQL Genie Space') 
+                             THEN q.executed_by END) AS bi_users
+                FROM system.query.history q
+                JOIN system.compute.warehouses w ON q.compute.warehouse_id = w.id
+                WHERE q.start_time >= DATEADD(DAY, -30, CURRENT_DATE())
+                  AND q.client_application IN ('Databricks SQL Dashboard', 'Databricks SQL Genie Space')
+                GROUP BY 1, 2, 3
+                ORDER BY (dashboard_queries + genie_queries) DESC
+            """)
+        except Exception as e:
+            return CheckResult("14.1.4", "Warehouses powering AI/BI",
+                "AI/BI Adoption", None, "info",
+                f"Could not query: {str(e)[:50]}", "N/A")
+
+        if not rows:
+            return CheckResult("14.1.4", "Warehouses powering AI/BI",
+                "AI/BI Adoption", None, "info",
+                "No AI/BI queries in last 30 days", "N/A")
+
+        nc = [{"warehouse": r["warehouse_name"],
+               "type": "Serverless" if r["serverless"] else r["warehouse_type"],
+               "dashboard_queries": r["dashboard_queries"],
+               "genie_queries": r["genie_queries"],
+               "bi_users": r["bi_users"]} for r in rows[:15]]
+
+        total_dash = sum(r["dashboard_queries"] for r in rows)
+        total_genie = sum(r["genie_queries"] for r in rows)
+        
+        # Check if serverless is being used for BI
+        serverless_bi = sum(r["dashboard_queries"] + r["genie_queries"] for r in rows if r["serverless"])
+        total_bi = total_dash + total_genie
+        serverless_pct = serverless_bi / max(total_bi, 1) * 100
+
+        rec = None
+        if serverless_pct < 80 and total_bi > 100:
+            rec = Recommendation(
+                action=f"Only {serverless_pct:.0f}% of AI/BI queries use serverless warehouses. Consider migrating for better cost efficiency.",
+                impact="Serverless warehouses auto-scale and reduce costs for variable BI workloads.",
+                priority="low",
+                docs_url="https://docs.databricks.com/en/compute/sql-warehouse/serverless.html")
+
+        return CheckResult("14.1.4", "Warehouses powering AI/BI",
+            "AI/BI Adoption", None, "info",
+            f"{len(rows)} warehouse(s) serve {total_dash:,} dashboard + {total_genie:,} Genie queries",
+            "Track BI infrastructure",
+            details={"warehouse_bi_usage": nc, 
+                     "summary": f"{serverless_pct:.0f}% of AI/BI queries on serverless"},
+            recommendation=rec)
+
+    def check_14_1_5_genie_space_activity(self) -> CheckResult:
+        """Track Genie space activity by user count — informational."""
+        try:
+            rows = self.executor.execute("""
+                SELECT DATE(start_time) AS query_date,
+                       COUNT(DISTINCT executed_by) AS genie_users,
+                       COUNT(*) AS genie_queries
+                FROM system.query.history
+                WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE())
+                  AND client_application = 'Databricks SQL Genie Space'
+                GROUP BY 1 ORDER BY 1 DESC
+            """)
+        except Exception as e:
+            return CheckResult("14.1.5", "Genie space activity trend",
+                "AI/BI Adoption", None, "info",
+                f"Could not query: {str(e)[:50]}", "N/A")
+
+        if not rows:
+            return CheckResult("14.1.5", "Genie space activity trend",
+                "AI/BI Adoption", None, "info",
+                "No Genie activity in last 30 days", "N/A")
+
+        total_users = len(set(r["genie_users"] for r in rows))  # Approximation
+        total_queries = sum(r["genie_queries"] for r in rows)
+        avg_daily_users = sum(r["genie_users"] for r in rows) / max(len(rows), 1)
+
+        trend = [{"date": str(r["query_date"]), "users": r["genie_users"], 
+                  "queries": r["genie_queries"]} for r in rows[:14]]
+
+        return CheckResult("14.1.5", "Genie space activity trend",
+            "AI/BI Adoption", None, "info",
+            f"~{avg_daily_users:.0f} daily users, {total_queries:,} queries in 30d",
+            "Track Genie adoption",
+            details={"daily_trend": trend,
+                     "summary": f"Genie is averaging {avg_daily_users:.0f} users/day"},
+            recommendation=None)

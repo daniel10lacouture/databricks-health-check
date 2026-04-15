@@ -310,3 +310,85 @@ class SecurityCheckRunner(BaseCheckRunner):
             f"{filters} row filters, {masks} column masks",
             "RLS and masking configured for sensitive tables",
             details={"non_conforming": nc}, recommendation=rec)
+    def check_5_4_3_outbound_network_activity(self) -> CheckResult:
+        """Track outbound network destinations — informational for security review."""
+        try:
+            rows = self.executor.execute("""
+                SELECT destination_type, 
+                       COUNT(DISTINCT destination) AS unique_destinations,
+                       COUNT(*) AS total_events
+                FROM system.access.outbound_network
+                WHERE event_time >= DATEADD(DAY, -7, CURRENT_DATE())
+                GROUP BY 1 ORDER BY total_events DESC
+            """)
+        except Exception as e:
+            return CheckResult("5.4.3", "Outbound network activity",
+                "Data Protection", None, "info",
+                f"Could not query: {str(e)[:60]}", "N/A")
+
+        if not rows:
+            return CheckResult("5.4.3", "Outbound network activity",
+                "Data Protection", None, "info",
+                "No outbound network events recorded", "N/A")
+
+        total_events = sum(int(r.get("total_events", 0)) for r in rows)
+        nc = [{"destination_type": r.get("destination_type", "unknown"),
+               "unique_destinations": r.get("unique_destinations", 0),
+               "total_events": int(r.get("total_events", 0))} for r in rows[:10]]
+
+        # Get top destinations for review
+        top_dests = self.executor.execute("""
+            SELECT destination, destination_type, COUNT(*) AS events
+            FROM system.access.outbound_network
+            WHERE event_time >= DATEADD(DAY, -7, CURRENT_DATE())
+            GROUP BY 1, 2 ORDER BY events DESC LIMIT 20
+        """)
+        dests = [{"destination": r.get("destination", "")[:60], 
+                  "type": r.get("destination_type", ""),
+                  "events": int(r.get("events", 0))} for r in (top_dests or [])[:15]]
+
+        return CheckResult("5.4.3", "Outbound network activity (7d)",
+            "Data Protection", None, "info",
+            f"{total_events:,} outbound events to {sum(r['unique_destinations'] for r in rows)} destinations",
+            "Review for unexpected egress",
+            details={"by_destination_type": nc, "top_destinations": dests,
+                     "summary": "Review destinations for unexpected data egress patterns"},
+            recommendation=None)
+
+    def check_5_4_4_column_lineage_coverage(self) -> CheckResult:
+        """Check if column-level lineage is being tracked."""
+        try:
+            rows = self.executor.execute("""
+                SELECT COUNT(DISTINCT CONCAT(source_table_catalog, '.', source_table_schema, '.', source_table_name)) AS source_tables,
+                       COUNT(DISTINCT CONCAT(target_table_catalog, '.', target_table_schema, '.', target_table_name)) AS target_tables,
+                       COUNT(*) AS lineage_edges
+                FROM system.access.column_lineage
+                WHERE event_time >= DATEADD(DAY, -30, CURRENT_DATE())
+            """)
+        except Exception as e:
+            return CheckResult("5.4.4", "Column lineage coverage",
+                "Data Protection", None, "info",
+                f"Could not query: {str(e)[:60]}", "N/A")
+
+        r = rows[0] if rows else {}
+        sources = int(r.get("source_tables", 0) or 0)
+        targets = int(r.get("target_tables", 0) or 0)
+        edges = int(r.get("lineage_edges", 0) or 0)
+
+        if edges == 0:
+            return CheckResult("5.4.4", "Column lineage coverage",
+                "Data Protection", None, "info",
+                "No column lineage data available", "N/A",
+                recommendation=Recommendation(
+                    action="Enable Unity Catalog lineage for data governance visibility.",
+                    impact="Column-level lineage helps track sensitive data flows and impact analysis.",
+                    priority="low",
+                    docs_url="https://docs.databricks.com/en/data-governance/unity-catalog/data-lineage.html"))
+
+        return CheckResult("5.4.4", "Column lineage coverage (30d)",
+            "Data Protection", None, "info",
+            f"{edges:,} lineage edges across {sources} source → {targets} target tables",
+            "Track data flows",
+            details={"source_tables": sources, "target_tables": targets, "lineage_edges": edges,
+                     "summary": "Column-level lineage is being tracked"},
+            recommendation=None)

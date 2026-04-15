@@ -254,3 +254,178 @@ class GovernanceCheckRunner(BaseCheckRunner):
                 impact="Over-broad storage credentials can expose data outside Unity Catalog governance.",
                 priority="low",
                 docs_url="https://docs.databricks.com/en/connect/unity-catalog/storage-credentials.html"))
+
+    # ── Tier 1: Table & Column Documentation ────────────────────────
+
+    def check_6_5_1_table_documentation(self):
+        """Tier 1: Only 13% of tables have comments."""
+        rows = self.executor.execute("""
+            SELECT COUNT(*) AS total,
+                   SUM(CASE WHEN comment IS NOT NULL AND TRIM(comment) != '' THEN 1 ELSE 0 END) AS documented
+            FROM system.information_schema.tables
+            WHERE table_schema != 'information_schema'
+              AND table_catalog NOT IN ('system', '__databricks_internal', 'hive_metastore')
+              AND table_type IN ('MANAGED', 'EXTERNAL')
+        """)
+        total = rows[0]["total"] or 0
+        documented = rows[0]["documented"] or 0
+        rate = documented / max(total, 1) * 100
+        if rate >= 50: score, status = 100, "pass"
+        elif rate >= 20: score, status = 50, "partial"
+        else: score, status = 0, "fail"
+
+        undocumented = self.executor.execute("""
+            SELECT table_catalog, table_schema, table_name
+            FROM system.information_schema.tables
+            WHERE table_schema != 'information_schema'
+              AND table_catalog NOT IN ('system', '__databricks_internal', 'hive_metastore')
+              AND table_type IN ('MANAGED', 'EXTERNAL')
+              AND (comment IS NULL OR TRIM(comment) = '')
+            ORDER BY table_catalog, table_schema, table_name
+            LIMIT 20
+        """)
+        nc = [{"table": f"{r['table_catalog']}.{r['table_schema']}.{r['table_name']}"} for r in undocumented]
+        if not nc:
+            nc = [{"status": f"All {total} tables documented"}]
+        rec = None
+        if score < 100:
+            rec = Recommendation(
+                action=f"Add table descriptions. Only {documented:,}/{total:,} tables ({rate:.0f}%) have comments.",
+                impact="Documentation improves data discovery and reduces misuse across teams.",
+                priority="medium",
+                sql_command="COMMENT ON TABLE catalog.schema.table IS 'Description of the table'",
+                docs_url="https://docs.databricks.com/en/sql/language-manual/sql-ref-syntax-ddl-comment.html")
+        return CheckResult("6.5.1", "Table documentation coverage", "Data Documentation",
+            score, status, f"{rate:.0f}% ({documented:,}/{total:,} tables)", "≥50% documented",
+            details={"undocumented_tables": nc}, recommendation=rec)
+
+    def check_6_5_2_column_documentation(self):
+        """Tier 1: Only 1% of columns have comments."""
+        rows = self.executor.execute("""
+            SELECT COUNT(*) AS total,
+                   SUM(CASE WHEN comment IS NOT NULL AND TRIM(comment) != '' THEN 1 ELSE 0 END) AS documented
+            FROM system.information_schema.columns
+            WHERE table_schema != 'information_schema'
+              AND table_catalog NOT IN ('system', '__databricks_internal', 'hive_metastore')
+        """)
+        total = rows[0]["total"] or 0
+        documented = rows[0]["documented"] or 0
+        rate = documented / max(total, 1) * 100
+        if rate >= 30: score, status = 100, "pass"
+        elif rate >= 10: score, status = 50, "partial"
+        else: score, status = 0, "fail"
+
+        top_undoc = self.executor.execute("""
+            SELECT table_catalog, table_schema, table_name,
+                   COUNT(*) AS total_cols,
+                   SUM(CASE WHEN comment IS NULL OR TRIM(comment) = '' THEN 1 ELSE 0 END) AS undoc_cols
+            FROM system.information_schema.columns
+            WHERE table_schema != 'information_schema'
+              AND table_catalog NOT IN ('system', '__databricks_internal', 'hive_metastore')
+            GROUP BY 1,2,3
+            HAVING SUM(CASE WHEN comment IS NULL OR TRIM(comment) = '' THEN 1 ELSE 0 END) > 10
+            ORDER BY undoc_cols DESC LIMIT 20
+        """)
+        nc = [{"table": f"{r['table_catalog']}.{r['table_schema']}.{r['table_name']}",
+               "undocumented_columns": r["undoc_cols"], "total_columns": r["total_cols"]}
+              for r in top_undoc] if top_undoc else [{"status": f"{documented:,}/{total:,} columns documented"}]
+        rec = None
+        if score < 100:
+            rec = Recommendation(
+                action=f"Add column descriptions. Only {documented:,}/{total:,} columns ({rate:.0f}%) have comments.",
+                impact="Column-level docs reduce data misinterpretation and improve data literacy.",
+                priority="low",
+                sql_command="ALTER TABLE catalog.schema.table ALTER COLUMN col_name COMMENT 'description'")
+        return CheckResult("6.5.2", "Column documentation coverage", "Data Documentation",
+            score, status, f"{rate:.0f}% ({documented:,}/{total:,} columns)", "≥30% documented",
+            details={"tables_with_undocumented_columns": nc}, recommendation=rec)
+
+    # ── Tier 2: Stale Table Detection ────────────────────────────────
+
+    def check_6_5_3_stale_tables(self):
+        """Tier 2: Tables not altered in 90+ days."""
+        rows = self.executor.execute("""
+            SELECT table_catalog, table_schema, table_name, last_altered,
+                   DATEDIFF(DAY, last_altered, CURRENT_DATE()) AS days_since_altered
+            FROM system.information_schema.tables
+            WHERE table_schema != 'information_schema'
+              AND table_catalog NOT IN ('system', '__databricks_internal', 'hive_metastore')
+              AND table_type IN ('MANAGED', 'EXTERNAL')
+              AND last_altered IS NOT NULL
+              AND DATEDIFF(DAY, last_altered, CURRENT_DATE()) > 90
+            ORDER BY days_since_altered DESC
+            LIMIT 30
+        """)
+        total_r = self.executor.execute("""
+            SELECT COUNT(*) AS total FROM system.information_schema.tables
+            WHERE table_schema != 'information_schema'
+              AND table_catalog NOT IN ('system', '__databricks_internal', 'hive_metastore')
+              AND table_type IN ('MANAGED', 'EXTERNAL')
+              AND last_altered IS NOT NULL
+        """)
+        total = total_r[0]["total"] or 0
+        stale_count = len(rows)
+        # We need total stale, not just top 30
+        stale_total_r = self.executor.execute("""
+            SELECT COUNT(*) AS cnt FROM system.information_schema.tables
+            WHERE table_schema != 'information_schema'
+              AND table_catalog NOT IN ('system', '__databricks_internal', 'hive_metastore')
+              AND table_type IN ('MANAGED', 'EXTERNAL')
+              AND last_altered IS NOT NULL
+              AND DATEDIFF(DAY, last_altered, CURRENT_DATE()) > 90
+        """)
+        stale_total = stale_total_r[0]["cnt"] or 0
+        rate = stale_total / max(total, 1) * 100
+        if rate <= 20: score, status = 100, "pass"
+        elif rate <= 40: score, status = 50, "partial"
+        else: score, status = 0, "fail"
+
+        nc = [{"table": f"{r['table_catalog']}.{r['table_schema']}.{r['table_name']}",
+               "days_stale": r["days_since_altered"],
+               "last_altered": str(r["last_altered"])[:10]}
+              for r in rows] if rows else [{"status": "No stale tables"}]
+        rec = None
+        if score < 100:
+            rec = Recommendation(
+                action=f"{stale_total:,} tables ({rate:.0f}%) haven't been altered in 90+ days. Review for deprecation or archival.",
+                impact="Stale tables waste storage and confuse data consumers.",
+                priority="low")
+        return CheckResult("6.5.3", "Stale tables (>90 days unaltered)", "Data Documentation",
+            score, status, f"{stale_total:,}/{total:,} tables ({rate:.0f}%)", "≤20% stale",
+            details={"stale_tables": nc}, recommendation=rec)
+
+    # ── Tier 2: Table Format Distribution ────────────────────────────
+
+    def check_6_5_4_table_format_distribution(self):
+        """Tier 2: Delta vs other table formats."""
+        rows = self.executor.execute("""
+            SELECT COALESCE(data_source_format, 'UNKNOWN') AS format,
+                   COUNT(*) AS table_count
+            FROM system.information_schema.tables
+            WHERE table_schema != 'information_schema'
+              AND table_catalog NOT IN ('system', '__databricks_internal', 'hive_metastore')
+              AND table_type IN ('MANAGED', 'EXTERNAL')
+            GROUP BY 1 ORDER BY table_count DESC
+        """)
+        total = sum(r["table_count"] for r in rows)
+        delta_row = next((r for r in rows if r["format"] in ('DELTA', 'delta')), None)
+        delta_count = delta_row["table_count"] if delta_row else 0
+        delta_pct = delta_count / max(total, 1) * 100
+        if delta_pct >= 90: score, status = 100, "pass"
+        elif delta_pct >= 70: score, status = 50, "partial"
+        else: score, status = 0, "fail"
+
+        nc = [{"format": r["format"], "tables": r["table_count"],
+               "percentage": f"{r['table_count']/max(total,1)*100:.1f}%"} for r in rows]
+        rec = None
+        if score < 100:
+            non_delta = total - delta_count
+            rec = Recommendation(
+                action=f"Migrate {non_delta:,} non-Delta tables to Delta format for ACID transactions, time travel, and better performance.",
+                impact="Delta format provides reliability, performance, and governance features.",
+                priority="medium",
+                docs_url="https://docs.databricks.com/en/delta/index.html")
+        return CheckResult("6.5.4", "Delta format adoption", "Data Documentation",
+            score, status, f"{delta_pct:.0f}% Delta ({delta_count:,}/{total:,})", "≥90% Delta",
+            details={"format_distribution": nc}, recommendation=rec)
+
