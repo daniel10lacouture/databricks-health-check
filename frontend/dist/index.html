@@ -44,7 +44,8 @@ const SECTIONS=[
 {id:'apps',name:'Databricks Apps',icon:'\u{1F4F1}',type:'conditional'},
 {id:'lakebase',name:'OLTP / Lakebase',icon:'\u{1F5A5}\uFE0F',type:'conditional'},
 {id:'delta_sharing',name:'Delta Sharing',icon:'\u{1F517}',type:'conditional'},
-{id:'workspace_admin',name:'Workspace Administration',icon:'\u{1F527}',type:'core'}
+{id:'workspace_admin',name:'Workspace Administration',icon:'\u{1F527}',type:'core'},
+{id:'adoption',name:'Platform Adoption',icon:'\u{1F680}',type:'advisory'}
 ];
 
 function scoreColor(s){return s>=90?'#059669':s>=70?'#2563EB':s>=50?'#D97706':'#DC2626'}
@@ -249,6 +250,59 @@ function renderInsightsPanel(){
   return h;
 }
 
+function renderScoreBooster(){
+  const r=state.results;if(!r||!r.score_booster||!r.score_booster.available)return'';
+  const sb=r.score_booster;
+  if(sb.total_boost<=0)return'';
+  const cur=sb.current_score;const pot=sb.potential_score;const boost=sb.total_boost;
+  const opps=sb.top_opportunities||[];
+  const curPct=Math.min(cur,100);const potPct=Math.min(pot,100);
+
+  let oppCards='';
+  opps.slice(0,3).forEach(opp=>{
+    const rec=opp.recommendation||{};
+    const docLink=rec.docs_url?`<a href="${esc(rec.docs_url)}" target="_blank" style="font-size:11px;color:#2563EB;margin-top:6px;display:inline-block">Get started \u2197</a>`:'';
+    oppCards+=`<div class="card" style="padding:14px;flex:1;min-width:220px;border-top:3px solid #059669">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <span style="font-size:13px;font-weight:600">${esc(opp.name)}</span>
+        <span style="font-size:12px;font-weight:700;color:#059669;background:#ECFDF5;padding:2px 8px;border-radius:10px">+${opp.projected_boost} pts</span>
+      </div>
+      <div style="font-size:12px;color:#6B7280;margin-bottom:4px">${esc(opp.current_value||'')}</div>
+      <div style="font-size:11px;color:#9CA3AF;font-style:italic;margin-bottom:4px">${esc(opp.peer_benchmark||'')}</div>
+      ${docLink}
+    </div>`;
+  });
+
+  const moreCount=sb.opportunity_count-3;
+  const moreLink=moreCount>0?`<div style="text-align:center;margin-top:12px"><a href="#" id="viewAllAdoption" style="font-size:13px;color:#2563EB;font-weight:500">See all ${sb.opportunity_count} optimization opportunities \u2192</a></div>`:'';
+
+  return `<div class="card" style="padding:24px;margin-top:24px;background:linear-gradient(135deg,#F0FDF4 0%,#ECFDF5 40%,#F5F7FA 100%);border:1px solid #BBF7D0">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px">
+      <div>
+        <div style="font-size:16px;font-weight:700;color:#166534">\u{1F680} Score Booster</div>
+        <div style="font-size:13px;color:#6B7280;margin-top:2px">Adopt these capabilities to unlock <strong>+${boost} points</strong></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:16px">
+        <div style="text-align:center"><div style="font-size:24px;font-weight:700;color:#374151">${cur}</div><div style="font-size:11px;color:#9CA3AF">Current</div></div>
+        <div style="font-size:18px;color:#9CA3AF">\u2192</div>
+        <div style="text-align:center"><div style="font-size:24px;font-weight:700;color:#059669">${pot}</div><div style="font-size:11px;color:#059669">Potential</div></div>
+      </div>
+    </div>
+    <div style="margin-bottom:20px;position:relative">
+      <div style="height:8px;background:#E5E7EB;border-radius:4px;overflow:visible;position:relative">
+        <div style="height:100%;width:${curPct}%;background:#374151;border-radius:4px;position:absolute;z-index:2"></div>
+        <div style="height:100%;width:${potPct}%;background:#BBF7D0;border-radius:4px;position:absolute;z-index:1"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:4px">
+        <span style="font-size:10px;color:#9CA3AF">0</span>
+        <span style="font-size:10px;color:#9CA3AF">100</span>
+      </div>
+    </div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap">${oppCards}</div>
+    ${moreLink}
+  </div>`;
+}
+
 function renderDashboard(){
   const r=state.results;if(!r)return'';
   const secs=r.sections||[];const active=secs.filter(s=>s.active);const ov=r.overall||{};
@@ -256,7 +310,9 @@ function renderDashboard(){
   secs.forEach(sec=>{
     const meta=SECTIONS.find(s=>s.id===sec.section_id)||{icon:'\u2B55',name:sec.section_name};
     const issues=(sec.checks||[]).filter(c=>c.status==='fail'||c.status==='partial').length;
-    const scoreHtml=sec.active&&sec.score!=null?`<span class="fade-in" style="font-size:26px;font-weight:700;color:${scoreColor(sec.score)};font-variant-numeric:tabular-nums">${Math.round(sec.score)}</span>`:`<span style="font-size:12px;color:#9CA3AF">N/A</span>`;
+    const isAdoption=sec.section_id==='adoption';
+    const adoptionBoost=isAdoption&&state.results&&state.results.score_booster?state.results.score_booster.total_boost:0;
+    const scoreHtml=isAdoption&&adoptionBoost>0?`<span class="fade-in" style="font-size:20px;font-weight:700;color:#059669;font-variant-numeric:tabular-nums">+${adoptionBoost} pts</span>`:sec.active&&sec.score!=null?`<span class="fade-in" style="font-size:26px;font-weight:700;color:${scoreColor(sec.score)};font-variant-numeric:tabular-nums">${Math.round(sec.score)}</span>`:`<span style="font-size:12px;color:#9CA3AF">N/A</span>`;
     const bar=sec.active?`<div style="margin-top:14px;height:4px;background:#F5F7FA;border-radius:2px;overflow:hidden"><div style="height:100%;width:${sec.score||0}%;background:${scoreColor(sec.score||0)};border-radius:2px;transition:width .6s ease"></div></div><div style="margin-top:8px;font-size:12px;color:${issues>0?'#D97706':'#059669'}">${issues>0?'\u26A0 '+issues+' check'+(issues>1?'s':'')+' need attention':'\u2705 All checks passing'}</div>`
       :`<div style="margin-top:10px;font-size:12px;color:#9CA3AF">Not Evaluated \u2014 No Significant Usage</div>`;
     cards+=`<div class="card section-card" data-sid="${sec.section_id}" style="padding:18px;cursor:${sec.active?'pointer':'default'};opacity:${sec.active?1:0.5};transition:all .2s">
@@ -274,6 +330,7 @@ function renderDashboard(){
     <h3 style="font-size:16px;font-weight:600;margin:0 0 12px">Sections</h3>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-bottom:32px">${cards}</div>
     ${recs?`<h3 style="font-size:16px;font-weight:600;margin:0 0 12px">Top Recommendations</h3>${recs}`:''}
+    ${renderScoreBooster()}
   </div>`;
 }
 
@@ -320,7 +377,11 @@ function renderAllDetails(det, checkStatus){
   });
 
   // Render scalar/object details as key-value pairs
-  const scalarKeys = Object.keys(det).filter(k => !Array.isArray(det[k]) && k !== 'summary' && det[k] !== null && det[k] !== undefined && typeof det[k] !== 'object');
+  const peerBenchmark=det.peer_benchmark||'';
+  if(peerBenchmark) html+=`<div style="margin-top:8px;padding:10px 14px;background:#EFF6FF;border:1px solid #BFDBFE;border-radius:6px;font-size:12px;color:#1E40AF"><strong>\u{1F465} Peer Insight:</strong> ${esc(peerBenchmark)}</div>`;
+  const projected=det.projected_score_boost||0;
+  if(projected>0) html+=`<div style="margin-top:6px;padding:8px 14px;background:#ECFDF5;border:1px solid #BBF7D0;border-radius:6px;font-size:12px;color:#166534"><strong>\u{1F4C8} Score Impact:</strong> Adopting this could add <strong>+${projected} points</strong> to your overall health score</div>`;
+  const scalarKeys = Object.keys(det).filter(k => !Array.isArray(det[k]) && k !== 'summary' && k !== 'peer_benchmark' && k !== 'projected_score_boost' && det[k] !== null && det[k] !== undefined && typeof det[k] !== 'object');
   if(scalarKeys.length > 0 && arrayKeys.length === 0){
     const items = scalarKeys.map(k => ({metric: k.replace(/_/g,' '), value: det[k]}));
     html+=`<div style="margin-top:10px">${renderDetailTable(items)}</div>`;
@@ -393,6 +454,8 @@ function bindEvents(){
       if(sec?.active){state.section=sid;state.view='section';render()}
     };
   });
+  const adoptLink=document.getElementById('viewAllAdoption');
+  if(adoptLink){adoptLink.onclick=e=>{e.preventDefault();state.section='adoption';state.view='section';render()};}
   document.querySelectorAll('.check-row').forEach(el=>{
     el.onclick=()=>{
       const det=el.querySelector('.check-detail');

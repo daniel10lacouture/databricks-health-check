@@ -104,6 +104,7 @@ def get_runners(executor, api_client, include_table_analysis):
     from checks.delta_sharing import DeltaSharingCheckRunner
     from checks.workspace_admin import WorkspaceAdminCheckRunner
     from checks.bi_tooling import BIToolingCheckRunner
+    from checks.adoption import AdoptionCheckRunner
 
     return [
         DataEngineeringCheckRunner(executor, api_client, include_table_analysis),
@@ -118,7 +119,64 @@ def get_runners(executor, api_client, include_table_analysis):
         LakebaseCheckRunner(executor, api_client, include_table_analysis),
         DeltaSharingCheckRunner(executor, api_client, include_table_analysis),
         WorkspaceAdminCheckRunner(executor, api_client, include_table_analysis),
+        AdoptionCheckRunner(executor, api_client, include_table_analysis),
     ]
+
+
+def _compute_score_booster(overall: dict, section_results: list) -> dict:
+    """
+    Compute the Score Booster: potential score if adoption opportunities are realized.
+    
+    Looks at the adoption section (advisory), extracts projected_score_boost from
+    each failing check, and computes what the overall score WOULD be if those
+    boosts were applied to the relevant health sections.
+    """
+    current_score = overall.get("overall_score")
+    if current_score is None:
+        return {"available": False}
+
+    # Find the adoption section
+    adoption_section = None
+    for s in section_results:
+        if s.get("section_id") == "adoption":
+            adoption_section = s
+            break
+
+    if not adoption_section or not adoption_section.get("active"):
+        return {"available": False, "current_score": current_score}
+
+    # Extract opportunities (non-passing checks with projected_score_boost)
+    opportunities = []
+    total_boost = 0
+    for check in adoption_section.get("checks", []):
+        boost = (check.get("details") or {}).get("projected_score_boost", 0)
+        if boost > 0 and check.get("status") in ("fail", "partial"):
+            opportunities.append({
+                "check_id": check.get("check_id"),
+                "name": check.get("name"),
+                "subsection": check.get("subsection"),
+                "current_value": check.get("current_value"),
+                "projected_boost": boost,
+                "peer_benchmark": (check.get("details") or {}).get("peer_benchmark", ""),
+                "recommendation": check.get("recommendation", {}),
+            })
+            total_boost += boost
+
+    # Sort by projected boost descending
+    opportunities.sort(key=lambda x: x["projected_boost"], reverse=True)
+
+    # Cap potential score at 100
+    potential_score = min(round(current_score + total_boost, 1), 100)
+
+    return {
+        "available": True,
+        "current_score": current_score,
+        "potential_score": potential_score,
+        "total_boost": total_boost,
+        "opportunity_count": len(opportunities),
+        "top_opportunities": opportunities[:5],
+        "all_opportunities": opportunities,
+    }
 
 
 # ── Background health-check runner ───────────────────────────────────
@@ -231,12 +289,16 @@ def run_health_check(warehouse_id: str, include_table_analysis: bool, user_token
             logger.warning(f"GenAI insights failed (non-blocking): {ge}")
             ai_insights = {"error": str(ge)}
 
+        # Pillar 4: Compute Score Booster (potential score from adoption opportunities)
+        score_booster = _compute_score_booster(overall, section_results)
+
         final = {
             "overall": overall,
             "sections": section_results,
             "top_recommendations": top_recs,
             "insights": insights_data,
             "ai_insights": ai_insights,
+            "score_booster": score_booster,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "diagnostics": {
                 "query_stats": executor.stats,
