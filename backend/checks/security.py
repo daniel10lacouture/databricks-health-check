@@ -11,7 +11,7 @@ class SecurityCheckRunner(BaseCheckRunner):
 
     def get_subsections(self):
         return ["Network Security", "Identity & Access Management",
-                "Audit & Monitoring", "Data Protection & PII"]
+                "Audit & Monitoring", "Data Protection & PII", "Token & Credential Hygiene"]
 
     def check_5_1_1_ip_access_lists(self) -> CheckResult:
         try:
@@ -555,4 +555,85 @@ class SecurityCheckRunner(BaseCheckRunner):
         return CheckResult("5.6.2", "PII columns without masking", "Data Classification",
             score, status, f"{len(rows)} PII columns in {unique_tables} tables without masking",
             "0 unmasked PII columns", details={"non_conforming": nc}, recommendation=rec)
+
+    # ── 5.7 Token & Credential Hygiene ────────────────────────────────
+
+    def check_5_7_1_token_hygiene(self) -> CheckResult:
+        """Analyze PAT token creation, usage, and rotation patterns."""
+        try:
+            rows = self.executor.execute("""
+                WITH token_events AS (
+                    SELECT action_name,
+                           user_identity.email AS user_email,
+                           event_time,
+                           request_params['tokenId'] AS token_id,
+                           request_params['comment'] AS token_comment
+                    FROM system.access.audit
+                    WHERE event_time >= DATEADD(DAY, -90, CURRENT_DATE())
+                      AND action_name IN ('generateDbToken', 'revokeDbToken', 'garbageCollectDbToken', 'tokenLogin')
+                ),
+                summary AS (
+                    SELECT 
+                        COUNT(CASE WHEN action_name = 'generateDbToken' THEN 1 END) AS tokens_created,
+                        COUNT(CASE WHEN action_name = 'revokeDbToken' THEN 1 END) AS tokens_revoked,
+                        COUNT(CASE WHEN action_name = 'garbageCollectDbToken' THEN 1 END) AS tokens_gc,
+                        COUNT(DISTINCT CASE WHEN action_name = 'tokenLogin' THEN user_email END) AS users_with_pat_login,
+                        COUNT(CASE WHEN action_name = 'tokenLogin' THEN 1 END) AS total_pat_logins
+                    FROM token_events
+                ),
+                top_pat_users AS (
+                    SELECT user_email, COUNT(*) AS pat_logins
+                    FROM token_events
+                    WHERE action_name = 'tokenLogin' AND user_email IS NOT NULL
+                    GROUP BY user_email
+                    ORDER BY pat_logins DESC
+                    LIMIT 10
+                )
+                SELECT s.*, COLLECT_LIST(STRUCT(t.user_email, t.pat_logins)) AS top_users
+                FROM summary s
+                CROSS JOIN top_pat_users t
+                GROUP BY s.tokens_created, s.tokens_revoked, s.tokens_gc, s.users_with_pat_login, s.total_pat_logins
+            """)
+        except Exception as e:
+            return CheckResult("5.7.1", "Token & credential hygiene (90d)", "Token & Credential Hygiene",
+                0, "not_evaluated", f"Could not query: {str(e)[:80]}", "N/A")
+
+        if not rows:
+            return CheckResult("5.7.1", "Token & credential hygiene (90d)", "Token & Credential Hygiene",
+                None, "info", "No token audit events found", "Monitor PAT token lifecycle")
+
+        r = rows[0]
+        created = int(r.get("tokens_created", 0) or 0)
+        revoked = int(r.get("tokens_revoked", 0) or 0)
+        gc = int(r.get("tokens_gc", 0) or 0)
+        pat_users = int(r.get("users_with_pat_login", 0) or 0)
+        pat_logins = int(r.get("total_pat_logins", 0) or 0)
+
+        # Rotation ratio: higher revoke/create ratio = better hygiene
+        rotation_ratio = revoked / max(created, 1) * 100
+        # Score based on whether tokens are being actively managed
+        score = 90 if rotation_ratio > 50 else 70 if rotation_ratio > 20 else 50 if created > 0 else 80
+        status = "pass" if score >= 80 else "partial" if score >= 50 else "fail"
+
+        nc = [{"metric": "PAT tokens created (90d)", "value": f"{created:,}"},
+              {"metric": "PAT tokens revoked (90d)", "value": f"{revoked:,}"},
+              {"metric": "Tokens garbage collected", "value": f"{gc:,}"},
+              {"metric": "Rotation ratio (revoked/created)", "value": f"{rotation_ratio:.1f}%"},
+              {"metric": "Users authenticating via PAT", "value": f"{pat_users:,}"},
+              {"metric": "Total PAT login events (90d)", "value": f"{pat_logins:,}"}]
+
+        rec = Recommendation(
+            action=f"{created} tokens created vs {revoked} revoked (rotation: {rotation_ratio:.0f}%). "
+                   f"{pat_users} users still authenticating via PATs ({pat_logins:,} logins). "
+                   f"Migrate to OAuth or service principal authentication and enforce token expiry policies.",
+            impact="Unrotated PATs are a top security risk — they provide persistent access without MFA. OAuth tokens expire automatically.",
+            priority="high" if pat_users > 50 and rotation_ratio < 20 else "medium",
+            docs_url="https://docs.databricks.com/en/dev-tools/auth/oauth-m2m.html")
+
+        return CheckResult("5.7.1", "Token & credential hygiene (90d)", "Token & Credential Hygiene",
+            score, status,
+            f"{created} tokens created, {revoked} revoked ({rotation_ratio:.0f}% rotation), {pat_users} PAT users",
+            "> 50% token rotation ratio, migrate to OAuth",
+            details={"non_conforming": nc},
+            recommendation=rec)
 

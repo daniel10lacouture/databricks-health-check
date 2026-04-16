@@ -1,5 +1,5 @@
 """
-Section 4: Cost Optimization — 15 checks
+Section 4: Cost Optimization — 19 checks
 Covers spend analysis, idle resource detection, governance & attribution.
 All checks include drill-down details with actual objects and recommendations.
 """
@@ -13,7 +13,7 @@ class CostCheckRunner(BaseCheckRunner):
     icon = "dollar-sign"
 
     def get_subsections(self):
-        return ["Spend Analysis", "Idle Resource Detection", "Governance & Attribution"]
+        return ["Spend Analysis", "Idle Resource Detection", "Governance & Attribution", "Cloud Infrastructure Cost", "Resource Efficiency", "Cost Intelligence"]
 
     # ── 4.1 Spend Analysis ────────────────────────────────────────────
 
@@ -599,4 +599,339 @@ class CostCheckRunner(BaseCheckRunner):
                 action=f"Review product-level spend. {top_product} consumes {top_pct:.0f}% of DBUs. Look for consolidation or optimization opportunities.",
                 impact="Product-level cost visibility enables targeted optimization of the highest-spend areas.",
                 priority="low"))
+
+    # ── 4.5 Resource Efficiency ───────────────────────────────────────
+
+    def check_4_5_1_csp_infra_cost_breakdown(self) -> CheckResult:
+        """Break down cloud provider infrastructure costs (EC2/VMs/storage) by cluster and warehouse."""
+        try:
+            rows = self.executor.execute("""
+                SELECT cloud,
+                       usage_metadata.cluster_id AS resource_id,
+                       CASE
+                           WHEN usage_metadata.warehouse_id IS NOT NULL THEN 'warehouse'
+                           WHEN usage_metadata.cluster_id IS NOT NULL THEN 'cluster'
+                           ELSE 'other'
+                       END AS resource_type,
+                       ROUND(SUM(cost), 2) AS total_cost,
+                       currency_code
+                FROM system.billing.cloud_infra_cost
+                WHERE usage_date >= DATEADD(DAY, -30, CURRENT_DATE())
+                GROUP BY cloud, usage_metadata.cluster_id, 
+                         CASE WHEN usage_metadata.warehouse_id IS NOT NULL THEN 'warehouse'
+                              WHEN usage_metadata.cluster_id IS NOT NULL THEN 'cluster'
+                              ELSE 'other' END,
+                         currency_code
+                ORDER BY total_cost DESC
+            """)
+        except Exception as e:
+            return CheckResult("4.5.1", "CSP infrastructure cost breakdown (30d)", "Resource Efficiency",
+                0, "not_evaluated", f"Could not query cloud_infra_cost: {str(e)[:80]}", "N/A")
+
+        if not rows:
+            return CheckResult("4.5.1", "CSP infrastructure cost breakdown (30d)", "Resource Efficiency",
+                None, "info",
+                "No cloud infrastructure cost data available. This table may not be enabled — contact your Databricks account team to activate system.billing.cloud_infra_cost.",
+                "Track CSP costs alongside DBU spend",
+                recommendation=Recommendation(
+                    action="Enable cloud_infra_cost system table to get visibility into your AWS/Azure/GCP compute and storage spend that runs underneath Databricks clusters.",
+                    impact="CSP infrastructure can be 30-50% of total Databricks-related spend. Migrating to serverless eliminates this cost entirely.",
+                    priority="medium",
+                    docs_url="https://docs.databricks.com/en/admin/system-tables/billing.html"))
+
+        total = sum(float(r.get("total_cost", 0) or 0) for r in rows)
+        cluster_cost = sum(float(r.get("total_cost", 0) or 0) for r in rows if r.get("resource_type") == "cluster")
+        wh_cost = sum(float(r.get("total_cost", 0) or 0) for r in rows if r.get("resource_type") == "warehouse")
+        other_cost = total - cluster_cost - wh_cost
+        currency = rows[0].get("currency_code", "USD") if rows else "USD"
+        cloud = rows[0].get("cloud", "unknown") if rows else "unknown"
+
+        # Score: lower CSP cost relative to total is better; serverless eliminates CSP cost
+        # If CSP cost > 0 there's a serverless migration opportunity  
+        score = 50 if total > 1000 else 80
+        status = "partial" if total > 1000 else "pass"
+
+        top_resources = rows[:15]
+        nc = [{"resource_id": r.get("resource_id", "N/A") or "unattributed",
+               "resource_type": r.get("resource_type", "unknown"),
+               "cost": f"${float(r.get('total_cost', 0) or 0):,.2f}",
+               "cloud": r.get("cloud", "N/A")} for r in top_resources]
+
+        rec = Recommendation(
+            action=f"Your {cloud.upper()} infrastructure costs {currency} {total:,.0f}/mo on Databricks-related resources. "
+                   f"Clusters account for ${cluster_cost:,.0f}, warehouses ${wh_cost:,.0f}. "
+                   f"Migrating to serverless compute eliminates CSP infrastructure charges entirely.",
+            impact=f"Potential savings of up to ${total:,.0f}/month by migrating all workloads to serverless — "
+                   f"the CSP compute layer is fully managed and included in serverless pricing.",
+            priority="high" if total > 10000 else "medium",
+            docs_url="https://docs.databricks.com/en/compute/serverless.html")
+
+        return CheckResult("4.5.1", "CSP infrastructure cost breakdown (30d)", "Resource Efficiency",
+            score, status,
+            f"${total:,.0f} in {cloud.upper()} infra costs (clusters: ${cluster_cost:,.0f}, warehouses: ${wh_cost:,.0f}, other: ${other_cost:,.0f})",
+            "Minimize or eliminate CSP infrastructure spend via serverless migration",
+            details={"non_conforming": nc, "summary": f"Total CSP spend: ${total:,.0f} {currency} across {len(rows)} resources"},
+            recommendation=rec)
+
+    def check_4_5_2_idle_cluster_burn_rate(self) -> CheckResult:
+        """Calculate cost being burned on idle/near-idle clusters (CPU < 5%)."""
+        try:
+            rows = self.executor.execute("""
+                WITH idle AS (
+                    SELECT cluster_id,
+                           COUNT(*) AS idle_intervals,
+                           COUNT(DISTINCT instance_id) AS idle_nodes,
+                           ROUND(SUM(
+                               TIMESTAMPDIFF(SECOND, start_time, end_time)
+                           ) / 3600.0, 1) AS idle_node_hours
+                    FROM system.compute.node_timeline
+                    WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE())
+                      AND cpu_user_percent < 5
+                      AND cpu_system_percent < 5
+                    GROUP BY cluster_id
+                ),
+                total AS (
+                    SELECT cluster_id,
+                           ROUND(SUM(
+                               TIMESTAMPDIFF(SECOND, start_time, end_time)
+                           ) / 3600.0, 1) AS total_node_hours
+                    FROM system.compute.node_timeline
+                    WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE())
+                    GROUP BY cluster_id
+                )
+                SELECT i.cluster_id,
+                       i.idle_node_hours,
+                       t.total_node_hours,
+                       ROUND(i.idle_node_hours / NULLIF(t.total_node_hours, 0) * 100, 1) AS idle_pct,
+                       i.idle_nodes
+                FROM idle i
+                JOIN total t ON i.cluster_id = t.cluster_id
+                WHERE i.idle_node_hours > 10
+                ORDER BY i.idle_node_hours DESC
+                LIMIT 20
+            """)
+        except Exception as e:
+            return CheckResult("4.5.2", "Idle cluster burn rate (30d)", "Resource Efficiency",
+                0, "not_evaluated", f"Could not query: {str(e)[:80]}", "N/A")
+
+        total_idle_hours = sum(float(r.get("idle_node_hours", 0) or 0) for r in rows)
+        total_hours = sum(float(r.get("total_node_hours", 0) or 0) for r in rows)
+        idle_pct_overall = (total_idle_hours / total_hours * 100) if total_hours > 0 else 0
+        # Conservative estimate: $0.50/node-hour average (mix of instance types)
+        est_waste = total_idle_hours * 0.50
+        cluster_count = len(rows)
+
+        score = max(0, 100 - int(idle_pct_overall))
+        status = "pass" if idle_pct_overall < 15 else "partial" if idle_pct_overall < 35 else "fail"
+
+        nc = [{"cluster_id": r.get("cluster_id", "N/A"),
+               "idle_node_hours": f"{float(r.get('idle_node_hours', 0) or 0):,.0f}",
+               "total_node_hours": f"{float(r.get('total_node_hours', 0) or 0):,.0f}",
+               "idle_pct": f"{float(r.get('idle_pct', 0) or 0):.1f}%",
+               "idle_nodes": r.get("idle_nodes", 0)} for r in rows[:15]]
+
+        rec = Recommendation(
+            action=f"{cluster_count} clusters burned {total_idle_hours:,.0f} idle node-hours (est. ${est_waste:,.0f} wasted). "
+                   f"Enable auto-termination, right-size clusters, or migrate to serverless to eliminate idle costs.",
+            impact=f"Estimated ${est_waste:,.0f}/month in idle compute waste. Serverless compute scales to zero automatically.",
+            priority="high" if est_waste > 5000 else "medium" if est_waste > 1000 else "low",
+            docs_url="https://docs.databricks.com/en/compute/configure.html#auto-termination")
+
+        return CheckResult("4.5.2", "Idle cluster burn rate (30d)", "Resource Efficiency",
+            score, status,
+            f"{total_idle_hours:,.0f} idle node-hours across {cluster_count} clusters (~${est_waste:,.0f} estimated waste)",
+            "< 15% idle time across clusters",
+            details={"non_conforming": nc, "summary": f"{idle_pct_overall:.1f}% of compute node-hours were idle"},
+            recommendation=rec)
+
+    def check_4_5_3_warehouse_idle_cost(self) -> CheckResult:
+        """Estimate warehouse idle time from start/stop event patterns."""
+        try:
+            rows = self.executor.execute("""
+                WITH events_ranked AS (
+                    SELECT warehouse_id, event_type, event_time,
+                           LEAD(event_type) OVER (PARTITION BY warehouse_id ORDER BY event_time) AS next_event,
+                           LEAD(event_time) OVER (PARTITION BY warehouse_id ORDER BY event_time) AS next_time
+                    FROM system.compute.warehouse_events
+                    WHERE event_time >= DATEADD(DAY, -30, CURRENT_DATE())
+                      AND event_type IN ('RUNNING', 'STOPPING', 'STOPPED', 'SCALED_UP', 'SCALED_DOWN')
+                ),
+                idle_windows AS (
+                    SELECT warehouse_id,
+                           TIMESTAMPDIFF(SECOND, event_time, next_time) / 3600.0 AS hours_in_state,
+                           cluster_count
+                    FROM (
+                        SELECT e.warehouse_id, e.event_time, e.next_time,
+                               we.cluster_count
+                        FROM events_ranked e
+                        JOIN system.compute.warehouse_events we
+                            ON e.warehouse_id = we.warehouse_id AND e.event_time = we.event_time
+                        WHERE e.event_type = 'RUNNING'
+                          AND e.next_event IN ('STOPPING', 'STOPPED')
+                          AND TIMESTAMPDIFF(SECOND, e.event_time, e.next_time) > 300
+                    )
+                )
+                SELECT warehouse_id,
+                       ROUND(SUM(hours_in_state), 1) AS idle_hours,
+                       COUNT(*) AS idle_sessions,
+                       MAX(cluster_count) AS max_clusters
+                FROM idle_windows
+                GROUP BY warehouse_id
+                ORDER BY idle_hours DESC
+                LIMIT 15
+            """)
+        except Exception as e:
+            return CheckResult("4.5.3", "Warehouse idle time (30d)", "Resource Efficiency",
+                0, "not_evaluated", f"Could not query: {str(e)[:80]}", "N/A")
+
+        total_idle = sum(float(r.get("idle_hours", 0) or 0) for r in rows)
+        wh_count = len(rows)
+
+        if not rows or total_idle < 1:
+            return CheckResult("4.5.3", "Warehouse idle time (30d)", "Resource Efficiency",
+                100, "pass", "Minimal warehouse idle time detected — warehouses are shutting down efficiently.",
+                "Minimize idle warehouse hours",
+                recommendation=Recommendation(
+                    action="Warehouse auto-stop is working well. Consider serverless warehouses for even faster cold starts.",
+                    impact="Serverless warehouses start in under 2 seconds and have zero idle cost.",
+                    priority="low"))
+
+        score = max(0, 100 - min(60, int(total_idle / 10)))
+        status = "pass" if total_idle < 50 else "partial" if total_idle < 200 else "fail"
+
+        nc = [{"warehouse_id": r.get("warehouse_id", "N/A"),
+               "idle_hours": f"{float(r.get('idle_hours', 0) or 0):,.1f}",
+               "idle_sessions": r.get("idle_sessions", 0),
+               "max_clusters": r.get("max_clusters", 0)} for r in rows]
+
+        rec = Recommendation(
+            action=f"{wh_count} warehouses had {total_idle:,.0f} hours of idle running time. "
+                   f"Reduce auto-stop timeout or migrate to serverless warehouses (zero idle cost, sub-2s startup).",
+            impact=f"Serverless warehouses eliminate idle costs entirely — no compute charges when not processing queries.",
+            priority="high" if total_idle > 200 else "medium",
+            docs_url="https://docs.databricks.com/en/compute/sql-warehouse/serverless.html")
+
+        return CheckResult("4.5.3", "Warehouse idle time (30d)", "Resource Efficiency",
+            score, status,
+            f"{total_idle:,.0f} idle hours across {wh_count} warehouses",
+            "< 50 total idle warehouse-hours/month",
+            details={"non_conforming": nc},
+            recommendation=rec)
+
+    # ── 4.6 Cost Intelligence ─────────────────────────────────────────
+
+    def check_4_6_1_cost_per_active_user(self) -> CheckResult:
+        """Calculate cost per active user to benchmark efficiency."""
+        try:
+            rows = self.executor.execute("""
+                WITH spend AS (
+                    SELECT ROUND(SUM(u.usage_quantity * COALESCE(lp.pricing.default, 0)), 2) AS total_cost
+                    FROM system.billing.usage u
+                    LEFT JOIN system.billing.list_prices lp
+                        ON u.cloud = lp.cloud AND u.sku_name = lp.sku_name
+                        AND u.usage_date >= lp.price_start_time
+                        AND (lp.price_end_time IS NULL OR u.usage_date < lp.price_end_time)
+                    WHERE u.usage_date >= DATEADD(DAY, -30, CURRENT_DATE())
+                      AND u.usage_unit = 'DBU'
+                ),
+                users AS (
+                    SELECT COUNT(DISTINCT executed_by) AS active_users
+                    FROM system.query.history
+                    WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE())
+                      AND executed_by IS NOT NULL
+                )
+                SELECT s.total_cost, u.active_users,
+                       ROUND(s.total_cost / NULLIF(u.active_users, 0), 2) AS cost_per_user
+                FROM spend s CROSS JOIN users u
+            """)
+        except Exception as e:
+            return CheckResult("4.6.1", "Cost per active user (30d)", "Cost Intelligence",
+                0, "not_evaluated", f"Could not query: {str(e)[:80]}", "N/A")
+
+        if not rows:
+            return CheckResult("4.6.1", "Cost per active user (30d)", "Cost Intelligence",
+                None, "info", "No billing or user data available", "Track per-user cost efficiency")
+
+        r = rows[0]
+        total = float(r.get("total_cost", 0) or 0)
+        users = int(r.get("active_users", 0) or 0)
+        cpu = float(r.get("cost_per_user", 0) or 0)
+
+        # Benchmark: < $500/user/mo is efficient, > $2000 is high
+        score = 100 if cpu < 500 else 80 if cpu < 1000 else 60 if cpu < 2000 else 40
+        status = "pass" if cpu < 500 else "partial" if cpu < 2000 else "fail"
+
+        nc = [{"total_cost": f"${total:,.0f}", "active_users": f"{users:,}",
+               "cost_per_user": f"${cpu:,.0f}"}]
+
+        rec = Recommendation(
+            action=f"Cost per active user is ${cpu:,.0f}/month ({users:,} users, ${total:,.0f} total). "
+                   + ("This is efficient — focus on increasing adoption to drive more value." if cpu < 500
+                      else "Review whether high-cost users are running inefficient queries or using oversized compute."),
+            impact="Per-user cost benchmarking reveals whether platform investment is well-distributed across the organization.",
+            priority="low" if cpu < 500 else "medium" if cpu < 2000 else "high",
+            docs_url="https://docs.databricks.com/en/admin/system-tables/billing.html")
+
+        return CheckResult("4.6.1", "Cost per active user (30d)", "Cost Intelligence",
+            score, status,
+            f"${cpu:,.0f}/user/month ({users:,} active users, ${total:,.0f} total)",
+            "< $500/user/month",
+            details={"non_conforming": nc},
+            recommendation=rec)
+
+    def check_4_6_2_top_expensive_queries(self) -> CheckResult:
+        """Identify the most expensive queries by total task duration."""
+        try:
+            rows = self.executor.execute("""
+                SELECT executed_by,
+                       statement_type,
+                       ROUND(total_task_duration_ms / 1000.0 / 3600.0, 2) AS task_hours,
+                       ROUND(execution_duration_ms / 1000.0 / 60.0, 1) AS wall_clock_min,
+                       ROUND(read_bytes / (1024.0 * 1024 * 1024), 2) AS read_gb,
+                       SUBSTRING(statement_text, 1, 120) AS query_preview,
+                       start_time
+                FROM system.query.history
+                WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE())
+                  AND total_task_duration_ms > 0
+                  AND execution_status = 'FINISHED'
+                ORDER BY total_task_duration_ms DESC
+                LIMIT 10
+            """)
+        except Exception as e:
+            return CheckResult("4.6.2", "Top expensive queries (30d)", "Cost Intelligence",
+                0, "not_evaluated", f"Could not query: {str(e)[:80]}", "N/A")
+
+        if not rows:
+            return CheckResult("4.6.2", "Top expensive queries (30d)", "Cost Intelligence",
+                None, "info", "No query history available", "Identify expensive query patterns")
+
+        total_task_hours = sum(float(r.get("task_hours", 0) or 0) for r in rows)
+        top_user = rows[0].get("executed_by", "unknown") if rows else "N/A"
+        top_hours = float(rows[0].get("task_hours", 0) or 0) if rows else 0
+
+        nc = [{"executed_by": r.get("executed_by", "N/A"),
+               "statement_type": r.get("statement_type", "N/A"),
+               "task_hours": f"{float(r.get('task_hours', 0) or 0):,.1f}h",
+               "wall_clock_min": f"{float(r.get('wall_clock_min', 0) or 0):,.0f}m",
+               "read_gb": f"{float(r.get('read_gb', 0) or 0):,.1f} GB",
+               "query_preview": (r.get("query_preview", "")[:100] or "N/A")} for r in rows]
+
+        # Score: if top query used > 100 task-hours, there's optimization opportunity
+        score = 100 if top_hours < 10 else 70 if top_hours < 50 else 50 if top_hours < 200 else 30
+        status = "pass" if top_hours < 10 else "partial" if top_hours < 200 else "fail"
+
+        rec = Recommendation(
+            action=f"Top 10 queries consumed {total_task_hours:,.0f} task-hours in 30 days. "
+                   f"Heaviest: {top_user} ({top_hours:,.0f} task-hours). "
+                   f"Review for missing filters, unnecessary full scans, or opportunities to use materialized views.",
+            impact="Optimizing the top 10 most expensive queries often reduces total compute spend by 15-30%.",
+            priority="high" if total_task_hours > 500 else "medium",
+            docs_url="https://docs.databricks.com/en/optimizations/index.html")
+
+        return CheckResult("4.6.2", "Top expensive queries (30d)", "Cost Intelligence",
+            score, status,
+            f"Top 10 queries consumed {total_task_hours:,.0f} task-hours — heaviest by {top_user}",
+            "< 10 task-hours per individual query",
+            details={"non_conforming": nc, "summary": f"Top 10 queries: {total_task_hours:,.0f} total task-hours"},
+            recommendation=rec)
 

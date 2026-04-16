@@ -220,7 +220,7 @@ function renderInsightsPanel(){
       const bc=a.severity==='high'?'#FECACA':'#FDE68A';
       const ic=a.severity==='high'?'#374151':'#6B7280';
       h+=`<div style="background:${bg};border-radius:8px;padding:10px 14px;border:1px solid ${bc};display:flex;align-items:flex-start;gap:8px">
-        <span style="color:${ic};flex-shrink:0">\u26A0</span>
+        <span style="flex-shrink:0"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${ic}"></span></span>
         <div><div style="font-size:13px;font-weight:600">${esc(a.title)}</div><div style="font-size:12px;color:#6B7280">${esc(a.message)}</div></div>
       </div>`;
     });
@@ -352,7 +352,7 @@ function renderDashboard(){
     const isAdoption=sec.section_id==='adoption';
     const adoptionBoost=isAdoption&&state.results&&state.results.score_booster?state.results.score_booster.total_boost:0;
     const scoreHtml=isAdoption&&adoptionBoost>0?`<span class="fade-in" style="font-size:20px;font-weight:700;color:#1B3139;font-variant-numeric:tabular-nums">+${adoptionBoost} pts</span>`:sec.active&&sec.score!=null?`<span class="fade-in" style="font-size:26px;font-weight:700;color:${scoreColor(sec.score)};font-variant-numeric:tabular-nums">${Math.round(sec.score)}</span>`:`<span style="font-size:12px;color:#9CA3AF">N/A</span>`;
-    const bar=sec.active?`<div style="margin-top:14px;height:4px;background:#F5F7FA;border-radius:2px;overflow:hidden"><div style="height:100%;width:${sec.score||0}%;background:${scoreColor(sec.score||0)};border-radius:2px;transition:width .6s ease"></div></div><div style="margin-top:8px;font-size:12px;color:${issues>0?'#6B7280':'#374151'}">${issues>0?'\u26A0 '+issues+' check'+(issues>1?'s':'')+' need attention':'\u2705 All checks passing'}</div>`
+    const bar=sec.active?`<div style="margin-top:14px;height:4px;background:#F5F7FA;border-radius:2px;overflow:hidden"><div style="height:100%;width:${sec.score||0}%;background:${scoreColor(sec.score||0)};border-radius:2px;transition:width .6s ease"></div></div><div style="margin-top:8px;font-size:12px;color:${issues>0?'#6B7280':'#374151'}">${issues>0?'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#B7791F;margin-right:4px"></span>'+issues+' check'+(issues>1?'s':'')+' need attention':'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2D6A4F;margin-right:4px"></span>All checks passing'}</div>`
       :`<div style="margin-top:10px;font-size:12px;color:#9CA3AF">Not Evaluated \u2014 No Significant Usage</div>`;
     const adoptStyle=isAdoption?'grid-column:1/-1;background:linear-gradient(135deg,#F8FAFC,#F1F5F9);border:1px solid #CBD5E1':'';
     cards+=`<div class="card section-card" data-sid="${sec.section_id}" style="padding:18px;cursor:${sec.active?'pointer':'default'};opacity:${sec.active?1:0.5};transition:all .2s;${adoptStyle}">
@@ -391,7 +391,7 @@ function renderDetailTable(items){
 /* Universal detail renderer — handles ALL possible detail keys from any check */
 function renderAllDetails(det, checkStatus){
   if(!det || typeof det !== 'object' || Object.keys(det).length === 0) {
-    if(checkStatus === 'pass') return '<div style="margin-top:8px;padding:10px 14px;background:#F0FDF4;border:1px solid #BBF7D0;border-radius:6px;font-size:12px;color:#166534"><strong>\u2705 Best practice achieved.</strong> This check meets or exceeds the target. Continue maintaining this standard.</div>';
+    if(checkStatus === 'pass') return '<div style="margin-top:8px;padding:10px 14px;background:#F0FDF4;border:1px solid #BBF7D0;border-radius:6px;font-size:12px;color:#166534"><strong><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2D6A4F;margin-right:6px;vertical-align:middle"></span>Best practice achieved.</strong> This check meets or exceeds the target. Continue maintaining this standard.</div>';
     return '<div style="margin-top:8px;font-size:12px;color:#9CA3AF">No additional details available.</div>';
   }
   let html='';
@@ -442,7 +442,8 @@ function renderSection(){
   Object.entries(grouped).forEach(([sub,chks])=>{
     let rows='';
     chks.forEach(c=>{
-      const icon=c.status==='pass'?'\u2705':c.status==='partial'?'\u26A0\uFE0F':c.status==='fail'?'\u274C':c.status==='info'?'\u2139\uFE0F':'\u2796';
+      const dotColor=c.status==='pass'?'#2D6A4F':c.status==='partial'?'#B7791F':c.status==='fail'?'#9B2C2C':c.status==='info'?'#9CA3AF':'#D1D5DB';
+      const icon='<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:'+dotColor+'"></span>';
       const sc=c.status==='info'?'INFO':c.status==='not_evaluated'?'N/A':c.score;
       const scColor=c.score===100?'#1B3139':c.score===50?'#6B7280':c.status==='info'?'#9CA3AF':'#9CA3AF';
       // Info badge explanation
@@ -457,13 +458,13 @@ function renderSection(){
       // Details — universal renderer for ALL checks
       const detailsHtml = renderAllDetails(c.details||{}, c.status);
 
-      rows+=`<div class="card check-row" style="padding:14px;margin-bottom:6px;cursor:pointer"><div style="display:flex;align-items:center;gap:12px"><span style="font-size:16px">${icon}</span><div style="flex:1"><div style="font-size:13px;font-weight:600">${esc(c.name)}${infoBadge}</div><div style="font-size:12px;color:#6B7280;margin-top:2px">${esc(c.current_value)} \u00B7 Target: ${esc(c.target_value)}</div></div><div style="display:flex;align-items:center;gap:6px"><span style="font-size:10px;color:#9CA3AF">\u25BC</span><span style="font-size:14px;font-weight:700;color:${scColor};font-variant-numeric:tabular-nums">${sc}</span></div></div><div class="check-detail" style="display:none">${recHtml}${detailsHtml}</div></div>`;
+      rows+=`<div class="card check-row" style="padding:14px;margin-bottom:6px;cursor:pointer;border:1px solid ${dotColor}22;border-left:3px solid ${dotColor}"><div style="display:flex;align-items:center;gap:12px"><span style="font-size:16px">${icon}</span><div style="flex:1"><div style="font-size:13px;font-weight:600">${esc(c.name)}${infoBadge}</div><div style="font-size:12px;color:#6B7280;margin-top:2px">${esc(c.current_value)} \u00B7 Target: ${esc(c.target_value)}</div></div><div style="display:flex;align-items:center;gap:6px"><span style="font-size:10px;color:#9CA3AF">\u25BC</span><span style="font-size:14px;font-weight:700;color:${scColor};font-variant-numeric:tabular-nums">${sc}</span></div></div><div class="check-detail" style="display:none">${recHtml}${detailsHtml}</div></div>`;
     });
     groups+=`<div style="margin-bottom:24px"><h2 style="font-size:15px;font-weight:600;margin:0 0 10px;padding-bottom:8px;border-bottom:2px solid #E5E7EB">${esc(sub)}</h2>${rows}</div>`;
   });
   return `<div style="padding:32px;max-width:960px;margin:0 auto">
     <button id="backBtn" class="btn" style="background:none;font-size:13px;color:#6B7280;padding:6px 0;margin-bottom:20px">\u2190 Back to Dashboard</button>
-    <div class="card" style="padding:24px;display:flex;align-items:center;gap:28px;margin-bottom:24px">${renderGaugeSVG(sec.score||0,100,false)}<div><h1 style="font-size:22px;font-weight:700;margin:0 0 4px">${esc(sec.section_name||sec.name||'')}</h1><div style="display:flex;gap:14px;margin-top:8px"><span style="font-size:13px;color:#6B7280">\u{1F7E2} <strong style="color:#1B3139">${scored.filter(c=>c.score===100).length}</strong> Pass</span><span style="font-size:13px;color:#6B7280">\u{1F7E1} <strong style="color:#6B7280">${scored.filter(c=>c.score===50).length}</strong> Partial</span><span style="font-size:13px;color:#6B7280">\u{1F534} <strong style="color:#9CA3AF">${scored.filter(c=>c.score===0&&c.status==='fail').length}</strong> Fail</span><span style="font-size:13px;color:#6B7280">\u2139\uFE0F <strong style="color:#6B7280">${checks.filter(c=>c.status==='info').length}</strong> Info</span></div></div></div>
+    <div class="card" style="padding:24px;display:flex;align-items:center;gap:28px;margin-bottom:24px">${renderGaugeSVG(sec.score||0,100,false)}<div><h1 style="font-size:22px;font-weight:700;margin:0 0 4px">${esc(sec.section_name||sec.name||'')}</h1><div style="display:flex;gap:14px;margin-top:8px"><span style="font-size:13px;color:#6B7280"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2D6A4F;margin-right:4px"></span><strong style="color:#1B3139">${scored.filter(c=>c.score===100).length}</strong> Pass</span><span style="font-size:13px;color:#6B7280"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#B7791F;margin-right:4px"></span><strong style="color:#6B7280">${scored.filter(c=>c.score===50).length}</strong> Partial</span><span style="font-size:13px;color:#6B7280"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#9B2C2C;margin-right:4px"></span><strong style="color:#9CA3AF">${scored.filter(c=>c.score===0&&c.status==='fail').length}</strong> Fail</span><span style="font-size:13px;color:#6B7280"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#9CA3AF;margin-right:4px"></span><strong style="color:#6B7280">${checks.filter(c=>c.status==='info').length}</strong> Info</span></div></div></div>
     ${groups}
   </div>`;
 }

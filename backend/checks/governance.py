@@ -11,7 +11,7 @@ class GovernanceCheckRunner(BaseCheckRunner):
 
     def get_subsections(self):
         return ["UC Adoption", "Access Control Patterns", "Lineage & Classification",
-                "Volume & Storage Governance"]
+                "Volume & Storage Governance", "Migration & Workspace Governance"]
 
     def check_6_1_1_uc_adoption(self) -> CheckResult:
         try:
@@ -428,4 +428,119 @@ class GovernanceCheckRunner(BaseCheckRunner):
         return CheckResult("6.5.4", "Delta format adoption", "Data Documentation",
             score, status, f"{delta_pct:.0f}% Delta ({delta_count:,}/{total:,})", "≥90% Delta",
             details={"format_distribution": nc}, recommendation=rec)
+
+    # ── 6.6 Migration & Workspace Governance ──────────────────────────
+
+    def check_6_6_1_uc_migration_progress(self) -> CheckResult:
+        """Measure Unity Catalog migration progress — what % of tables are in UC vs legacy hive_metastore."""
+        try:
+            rows = self.executor.execute("""
+                SELECT 
+                    COUNT(*) AS total_tables,
+                    COUNT(CASE WHEN table_catalog != 'hive_metastore' AND table_catalog != 'system' THEN 1 END) AS uc_tables,
+                    COUNT(CASE WHEN table_catalog = 'hive_metastore' THEN 1 END) AS hms_tables,
+                    COUNT(CASE WHEN table_type = 'MANAGED' AND table_catalog != 'hive_metastore' AND table_catalog != 'system' THEN 1 END) AS uc_managed,
+                    COUNT(CASE WHEN table_type = 'EXTERNAL' AND table_catalog != 'hive_metastore' AND table_catalog != 'system' THEN 1 END) AS uc_external,
+                    COUNT(DISTINCT CASE WHEN table_catalog != 'hive_metastore' AND table_catalog != 'system' THEN table_catalog END) AS uc_catalogs,
+                    COUNT(DISTINCT CASE WHEN table_catalog != 'hive_metastore' AND table_catalog != 'system' THEN CONCAT(table_catalog, '.', table_schema) END) AS uc_schemas
+                FROM system.information_schema.tables
+                WHERE table_schema NOT IN ('information_schema', 'default')
+            """)
+        except Exception as e:
+            return CheckResult("6.6.1", "Unity Catalog migration progress", "Migration & Workspace Governance",
+                0, "not_evaluated", f"Could not query: {str(e)[:80]}", "N/A")
+
+        if not rows:
+            return CheckResult("6.6.1", "Unity Catalog migration progress", "Migration & Workspace Governance",
+                None, "info", "No table metadata available", "100% of tables in Unity Catalog")
+
+        r = rows[0]
+        total = int(r.get("total_tables", 0) or 0)
+        uc = int(r.get("uc_tables", 0) or 0)
+        hms = int(r.get("hms_tables", 0) or 0)
+        uc_managed = int(r.get("uc_managed", 0) or 0)
+        uc_external = int(r.get("uc_external", 0) or 0)
+        catalogs = int(r.get("uc_catalogs", 0) or 0)
+        schemas = int(r.get("uc_schemas", 0) or 0)
+        uc_pct = uc / total * 100 if total > 0 else 100
+
+        score = min(100, int(uc_pct))
+        status = "pass" if hms == 0 else "partial" if uc_pct > 50 else "fail"
+
+        nc = [{"metric": "Total tables", "value": f"{total:,}"},
+              {"metric": "Unity Catalog tables", "value": f"{uc:,} ({uc_pct:.1f}%)"},
+              {"metric": "hive_metastore (legacy)", "value": f"{hms:,}"},
+              {"metric": "UC managed tables", "value": f"{uc_managed:,}"},
+              {"metric": "UC external tables", "value": f"{uc_external:,}"},
+              {"metric": "UC catalogs", "value": f"{catalogs:,}"},
+              {"metric": "UC schemas", "value": f"{schemas:,}"}]
+
+        rec = Recommendation(
+            action=f"{uc_pct:.0f}% of tables are in Unity Catalog ({uc:,}/{total:,}). "
+                   + (f"{hms:,} tables remain in hive_metastore — plan migration using UCX toolkit." if hms > 0
+                      else "All tables are in Unity Catalog — migration complete."),
+            impact="Unity Catalog provides centralized governance, fine-grained access control, lineage tracking, and data classification. "
+                   "Legacy hive_metastore tables lack these protections.",
+            priority="high" if hms > 50 else "medium" if hms > 0 else "low",
+            docs_url="https://docs.databricks.com/en/data-governance/unity-catalog/index.html")
+
+        return CheckResult("6.6.1", "Unity Catalog migration progress", "Migration & Workspace Governance",
+            score, status,
+            f"{uc_pct:.0f}% in Unity Catalog ({uc:,} UC, {hms:,} legacy) across {catalogs} catalogs",
+            "100% of tables in Unity Catalog",
+            details={"non_conforming": nc},
+            recommendation=rec)
+
+    def check_6_6_2_cross_workspace_governance(self) -> CheckResult:
+        """Assess cross-workspace governance — workspace count, naming, and activity patterns."""
+        try:
+            rows = self.executor.execute("""
+                SELECT workspace_id, workspace_name, workspace_url,
+                       create_time, status
+                FROM system.access.workspaces_latest
+                ORDER BY create_time DESC
+            """)
+        except Exception as e:
+            return CheckResult("6.6.2", "Cross-workspace governance", "Migration & Workspace Governance",
+                0, "not_evaluated", f"Could not query: {str(e)[:80]}", "N/A")
+
+        if not rows:
+            return CheckResult("6.6.2", "Cross-workspace governance", "Migration & Workspace Governance",
+                None, "info", "No workspace data available", "Maintain governed workspace topology")
+
+        total_ws = len(rows)
+        active_ws = sum(1 for r in rows if r.get("status", "").upper() == "RUNNING")
+        inactive_ws = total_ws - active_ws
+
+        # Check naming conventions (good governance = consistent naming patterns)
+        names = [r.get("workspace_name", "") or "" for r in rows]
+        has_env_tag = sum(1 for n in names if any(tag in n.lower() for tag in ["prod", "dev", "staging", "test", "sandbox"]))
+        naming_pct = has_env_tag / total_ws * 100 if total_ws > 0 else 0
+
+        # Score: fewer is better for governance, naming conventions help
+        score = 90 if total_ws <= 10 else 75 if total_ws <= 50 else 60 if naming_pct > 50 else 45
+        status = "pass" if score >= 80 else "partial" if score >= 50 else "fail"
+
+        nc = [{"workspace_name": (r.get("workspace_name", "N/A") or "unnamed")[:60],
+               "workspace_id": r.get("workspace_id", "N/A"),
+               "status": r.get("status", "N/A"),
+               "created": str(r.get("create_time", "N/A"))[:10]}
+              for r in rows[:20]]
+
+        rec = Recommendation(
+            action=f"{total_ws} workspaces ({active_ws} active, {inactive_ws} inactive). "
+                   f"{has_env_tag}/{total_ws} follow environment naming conventions. "
+                   f"Establish workspace provisioning policies, decommission unused workspaces, "
+                   f"and enforce consistent naming (e.g., team-env-purpose).",
+            impact="Workspace sprawl increases attack surface, complicates governance, and makes cost attribution difficult. "
+                   "Consolidation reduces overhead and improves security posture.",
+            priority="high" if total_ws > 100 else "medium" if total_ws > 20 else "low",
+            docs_url="https://docs.databricks.com/en/admin/account-settings-e2/workspaces.html")
+
+        return CheckResult("6.6.2", "Cross-workspace governance", "Migration & Workspace Governance",
+            score, status,
+            f"{total_ws} workspaces ({active_ws} active) — {naming_pct:.0f}% follow naming conventions",
+            "Consistent naming + <20 active workspaces",
+            details={"non_conforming": nc, "summary": f"{total_ws} total, {has_env_tag} with env tags in name"},
+            recommendation=rec)
 

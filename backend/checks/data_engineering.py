@@ -13,7 +13,7 @@ class DataEngineeringCheckRunner(BaseCheckRunner):
     def get_subsections(self):
         return ["Table Inventory & Governance", "Delta Table Maintenance & Layout",
                 "Storage Optimization", "ETL Pipeline Health",
-                "Pipeline & Ingestion Performance", "Job Configuration Health"]
+                "Pipeline & Ingestion Performance", "Job Configuration Health", "Operational Efficiency"]
 
     # ── 1.1 Table Inventory & Governance ─────────────────────────────
 
@@ -802,4 +802,127 @@ class DataEngineeringCheckRunner(BaseCheckRunner):
         return CheckResult("1.8.3", "Storage growth (30d)", "Pipeline & Task-Level Analysis",
             score, status, f"{len(rows)} tables growing >50%/month",
             "<50% monthly growth for tables >1GB", details={"non_conforming": nc}, recommendation=rec)
+
+    # ── 1.9 Operational Efficiency ────────────────────────────────────
+
+    def check_1_9_1_job_sla_compliance(self) -> CheckResult:
+        """Measure job SLA compliance — % of recurring jobs completing within 2x their median duration."""
+        try:
+            rows = self.executor.execute("""
+                WITH job_stats AS (
+                    SELECT job_id,
+                           run_name,
+                           COUNT(*) AS total_runs,
+                           PERCENTILE(run_duration_seconds, 0.5) AS median_duration,
+                           SUM(CASE WHEN run_duration_seconds > PERCENTILE(run_duration_seconds, 0.5) * 2 THEN 1 ELSE 0 END) AS sla_breaches,
+                           MAX(run_duration_seconds) AS max_duration,
+                           AVG(run_duration_seconds) AS avg_duration
+                    FROM system.lakeflow.job_run_timeline
+                    WHERE period_start_time >= DATEADD(DAY, -30, CURRENT_DATE())
+                      AND result_state IS NOT NULL
+                      AND run_duration_seconds > 0
+                      AND run_type = 'JOB_RUN'
+                    GROUP BY job_id, run_name
+                    HAVING COUNT(*) >= 5
+                )
+                SELECT job_id, run_name, total_runs,
+                       ROUND(median_duration / 60.0, 1) AS median_min,
+                       ROUND(avg_duration / 60.0, 1) AS avg_min,
+                       ROUND(max_duration / 60.0, 1) AS max_min,
+                       sla_breaches,
+                       ROUND((total_runs - sla_breaches) * 100.0 / total_runs, 1) AS sla_pct
+                FROM job_stats
+                ORDER BY sla_breaches DESC
+                LIMIT 20
+            """)
+        except Exception as e:
+            return CheckResult("1.9.1", "Job SLA compliance (30d)", "Operational Efficiency",
+                0, "not_evaluated", f"Could not query: {str(e)[:80]}", "N/A")
+
+        if not rows:
+            return CheckResult("1.9.1", "Job SLA compliance (30d)", "Operational Efficiency",
+                None, "info", "Not enough recurring jobs (need 5+ runs) to calculate SLA compliance",
+                "> 90% of job runs within 2x median duration")
+
+        total_jobs = len(rows)
+        jobs_meeting_sla = sum(1 for r in rows if float(r.get("sla_pct", 0) or 0) >= 90)
+        overall_sla_pct = jobs_meeting_sla / total_jobs * 100 if total_jobs > 0 else 0
+        total_breaches = sum(int(r.get("sla_breaches", 0) or 0) for r in rows)
+
+        score = min(100, int(overall_sla_pct))
+        status = "pass" if overall_sla_pct >= 90 else "partial" if overall_sla_pct >= 70 else "fail"
+
+        nc = [{"job_id": r.get("job_id", "N/A"),
+               "run_name": (r.get("run_name", "") or "unnamed")[:50],
+               "total_runs": r.get("total_runs", 0),
+               "median_min": f"{float(r.get('median_min', 0) or 0):.1f}m",
+               "max_min": f"{float(r.get('max_min', 0) or 0):.1f}m",
+               "sla_breaches": r.get("sla_breaches", 0),
+               "sla_pct": f"{float(r.get('sla_pct', 0) or 0):.1f}%"} for r in rows if int(r.get("sla_breaches", 0) or 0) > 0]
+
+        rec = Recommendation(
+            action=f"{jobs_meeting_sla}/{total_jobs} recurring jobs meet 90% SLA. "
+                   f"{total_breaches} total SLA breaches (runs exceeding 2x median). "
+                   f"Investigate jobs with frequent breaches for data growth, missing indexes, or undersized clusters.",
+            impact="SLA-breaching jobs indicate performance degradation — often a sign of data growth outpacing compute or missing optimizations.",
+            priority="high" if overall_sla_pct < 70 else "medium" if overall_sla_pct < 90 else "low",
+            docs_url="https://docs.databricks.com/en/workflows/jobs/monitor-jobs.html")
+
+        return CheckResult("1.9.1", "Job SLA compliance (30d)", "Operational Efficiency",
+            score, status,
+            f"{jobs_meeting_sla}/{total_jobs} jobs meet SLA ({overall_sla_pct:.0f}%), {total_breaches} total breaches",
+            "> 90% of recurring jobs meet SLA",
+            details={"non_conforming": nc, "summary": f"Analyzed {total_jobs} recurring jobs with 5+ runs"},
+            recommendation=rec)
+
+    def check_1_9_2_data_freshness(self) -> CheckResult:
+        """Check data freshness — identify tables not updated in 7/30/90 days."""
+        try:
+            rows = self.executor.execute("""
+                SELECT catalog_name, schema_name, table_name, table_type,
+                       last_altered AS last_modified,
+                       DATEDIFF(DAY, last_altered, CURRENT_TIMESTAMP()) AS days_since_update
+                FROM system.information_schema.tables
+                WHERE table_schema NOT IN ('information_schema', 'default')
+                  AND table_catalog != 'system'
+                  AND last_altered IS NOT NULL
+                ORDER BY last_altered ASC
+                LIMIT 200
+            """)
+        except Exception as e:
+            return CheckResult("1.9.2", "Data freshness (staleness detection)", "Operational Efficiency",
+                0, "not_evaluated", f"Could not query: {str(e)[:80]}", "N/A")
+
+        if not rows:
+            return CheckResult("1.9.2", "Data freshness (staleness detection)", "Operational Efficiency",
+                None, "info", "No table modification metadata available", "Monitor table update frequency")
+
+        total = len(rows)
+        stale_7d = sum(1 for r in rows if int(r.get("days_since_update", 0) or 0) > 7)
+        stale_30d = sum(1 for r in rows if int(r.get("days_since_update", 0) or 0) > 30)
+        stale_90d = sum(1 for r in rows if int(r.get("days_since_update", 0) or 0) > 90)
+        fresh_pct = (total - stale_30d) / total * 100 if total > 0 else 100
+
+        score = min(100, int(fresh_pct))
+        status = "pass" if stale_30d == 0 else "partial" if stale_90d < total * 0.2 else "fail"
+
+        nc = [{"table": f"{r.get('catalog_name','')}.{r.get('schema_name','')}.{r.get('table_name','')}",
+               "table_type": r.get("table_type", "N/A"),
+               "days_stale": r.get("days_since_update", "N/A"),
+               "last_modified": str(r.get("last_modified", "N/A"))[:19]}
+              for r in rows if int(r.get("days_since_update", 0) or 0) > 30][:15]
+
+        rec = Recommendation(
+            action=f"Out of {total} tables sampled: {stale_7d} not updated in 7d, {stale_30d} in 30d, {stale_90d} in 90d+. "
+                   f"Investigate stale tables — they may indicate broken pipelines, abandoned projects, or wasted storage.",
+            impact="Stale tables waste storage costs and can mislead downstream consumers relying on outdated data.",
+            priority="high" if stale_90d > 10 else "medium" if stale_30d > 5 else "low",
+            docs_url="https://docs.databricks.com/en/optimizations/predictive-optimization.html")
+
+        return CheckResult("1.9.2", "Data freshness (staleness detection)", "Operational Efficiency",
+            score, status,
+            f"{total - stale_30d}/{total} tables updated within 30d ({fresh_pct:.0f}% fresh) | {stale_90d} stale 90d+",
+            "> 80% of tables updated within 30 days",
+            details={"non_conforming": nc, "summary": f"7d stale: {stale_7d}, 30d: {stale_30d}, 90d+: {stale_90d}"},
+            recommendation=rec)
 
