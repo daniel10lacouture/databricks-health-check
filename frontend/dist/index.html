@@ -6,7 +6,7 @@
 <title>Databricks Account Health Check</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{--primary:#FF3621;--dark:#1B3139;--white:#FFF;--surface:#F5F7FA;--text:#1B1F23;--text2:#6B7280;--text3:#9CA3AF;--border:#E5E7EB;--excellent:#059669;--good:#2563EB;--warn:#D97706;--crit:#DC2626}
+:root{--primary:#FF3621;--dark:#1B3139;--white:#FFF;--surface:#F5F7FA;--text:#1B1F23;--text2:#6B7280;--text3:#9CA3AF;--border:#E5E7EB;--excellent:#1B3139;--good:#374151;--warn:#6B7280;--crit:#9CA3AF}
 body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--surface);color:var(--text)}
 .btn{border:none;cursor:pointer;font-family:inherit;transition:all .2s}
 .card{background:var(--white);border-radius:8px;border:1px solid var(--border);box-shadow:0 1px 3px rgba(0,0,0,.08)}
@@ -48,7 +48,7 @@ const SECTIONS=[
 {id:'adoption',name:'Platform Adoption',icon:'\u{1F680}',type:'advisory'}
 ];
 
-function scoreColor(s){return s>=90?'#059669':s>=70?'#2563EB':s>=50?'#D97706':'#DC2626'}
+function scoreColor(s){return s>=90?'#1B3139':s>=70?'#374151':s>=50?'#6B7280':'#9CA3AF'}
 function scoreLabel(s){return s>=90?'Excellent':s>=70?'Good':s>=50?'Needs Attention':'Critical'}
 function esc(s){if(s==null)return'';const d=document.createElement('div');d.textContent=String(s);return d.innerHTML}
 
@@ -84,17 +84,56 @@ function renderSetup(){
 function renderRunning(){
   const rs=state.runState;
   const pct=rs.total?Math.round((rs.idx/rs.total)*100):0;
+  const sIcons={
+    data_engineering:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>',
+    sql_analytics:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"><path d="M3 20h18M5 20V10M9 20V4M13 20v-8M17 20V8M21 20V2"/></svg>',
+    compute:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.2 4.2l2.8 2.8M17 17l2.8 2.8M1 12h4M19 12h4M4.2 19.8l2.8-2.8M17 7l2.8-2.8"/></svg>',
+    cost_optimization:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 100 7h5a3.5 3.5 0 110 7H6"/></svg>',
+    security:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
+    governance:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/><circle cx="12" cy="16" r="1"/></svg>',
+    ai_ml:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"><path d="M12 2a4 4 0 014 4c0 1.1-.4 2-1 2.8L12 12l-3-3.2A4 4 0 0112 2zM4 14l4-2 4 4 4-4 4 2v5a1 1 0 01-1 1H5a1 1 0 01-1-1v-5z"/></svg>',
+    bi_tooling:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>',
+    apps:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"><rect x="2" y="2" width="20" height="20" rx="4"/><path d="M8 2v20M2 8h20"/></svg>',
+    lakebase:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"/><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"/></svg>',
+    delta_sharing:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"><circle cx="6" cy="12" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><path d="M8.6 13.5l6.8 3M8.6 10.5l6.8-3"/></svg>',
+    workspace_admin:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.8-3.8a3 3 0 01-4.2 4.2L7 20l-4 1 1-4 10.3-10.3a3 3 0 014.2-4.2"/></svg>',
+    adoption:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>'
+  };
+  const didYouKnow=[
+    "Databricks supports vector indexes with embedding models like databricks-gte-large-en and databricks-bge-large-en, plus external models from OpenAI, Google, and Cohere \u2014 all governed through Unity Catalog.",
+    "The Databricks Mobile app lets you monitor jobs, view AI/BI Dashboards, and interact with Databricks Apps like this one \u2014 all from your phone.",
+    "You can call AI models directly from SQL using ai_query(), ai_classify(), ai_extract(), and ai_forecast() \u2014 no Python required.",
+    "Genie lets business users ask data questions in plain English and get instant answers. Set up a Genie space for your team in minutes.",
+    "AI/BI Dashboards can be shared with stakeholders as consumer users \u2014 they get interactive, governed analytics without needing a Databricks login or SQL skills, and every dashboard includes a Genie-powered Q&A button built in.",
+    "Predictive Optimization automatically runs OPTIMIZE and VACUUM on your Delta tables \u2014 eliminating the need for manual maintenance jobs entirely.",
+    "Liquid Clustering replaces traditional partitioning with adaptive, automatic data layout that continuously optimizes for your actual query patterns.",
+    "Delta Sharing is an open protocol that lets you share live data across organizations and clouds without copying \u2014 and recipients don\u2019t even need Databricks.",
+    "You can build, evaluate, and deploy production AI agents entirely within Databricks using Mosaic AI Agent Framework \u2014 complete with retrieval, tool calling, guardrails, and human feedback loops.",
+    "Lakebase brings fully managed OLTP database capabilities to the Lakehouse \u2014 run transactional workloads with row-level reads and writes, all governed by Unity Catalog, without needing an external database."
+  ];
+  if(!window._dykIdx)window._dykIdx=Math.floor(Math.random()*didYouKnow.length);
+  if(!window._dykTimer){window._dykTimer=setInterval(()=>{window._dykIdx=(window._dykIdx+1)%didYouKnow.length;const el=document.getElementById('dykText');if(el){el.style.opacity='0';setTimeout(()=>{el.textContent=didYouKnow[window._dykIdx];el.style.opacity='1'},400)}},8000)}
+  const dykText=didYouKnow[window._dykIdx];
+
   let cards='';
   SECTIONS.forEach(s=>{
     const c=rs.completed[s.id];
-    const scoreHtml=c?`<div class="fade-in" style="margin-top:6px;font-size:22px;font-weight:700;color:${c.active?scoreColor(c.score):'#9CA3AF'}">${c.active?Math.round(c.score):'N/A'}</div>`
-      :`<div class="skeleton" style="margin-top:6px;height:22px;width:40px"></div>`;
-    cards+=`<div class="card" style="padding:16px;opacity:${c?1:0.45};transition:all .3s"><div style="font-size:13px;font-weight:600">${s.icon} ${esc(s.name)}</div>${scoreHtml}</div>`;
+    const icon=sIcons[s.id]||'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"><circle cx="12" cy="12" r="10"/></svg>';
+    const scoreHtml=c?`<div class="fade-in" style="margin-top:6px;font-size:22px;font-weight:700;color:${c.active?'rgba(255,255,255,0.9)':'rgba(255,255,255,0.3)'}">${c.active?Math.round(c.score):'N/A'}</div>`
+      :`<div class="skeleton" style="margin-top:6px;height:22px;width:40px;background:rgba(255,255,255,0.05)"></div>`;
+    cards+=`<div style="padding:16px;border-radius:8px;background:rgba(255,255,255,${c?'0.07':'0.03'});border:1px solid rgba(255,255,255,0.08);opacity:${c?1:0.5};transition:all .3s"><div style="font-size:13px;font-weight:600;color:rgba(255,255,255,0.8);display:flex;align-items:center;gap:8px">${icon} ${esc(s.name)}</div>${scoreHtml}</div>`;
   });
-  return `<div style="padding:32px">
-    <div style="height:4px;background:#E5E7EB;border-radius:2px;overflow:hidden;margin-bottom:12px"><div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#FF3621,#FF6B4A);border-radius:2px;transition:width .5s ease"></div></div>
-    <div style="display:flex;justify-content:space-between;font-size:13px;color:#6B7280"><span>Completed ${rs.idx} of ${rs.total} sections <strong style="color:#1B1F23">${rs.name?' — '+esc(rs.name):''}</strong></span><span>${pct}%</span></div>
-    <div style="margin-top:40px;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px">${cards}</div>
+  return `<div style="min-height:100vh;background:#1B3139;padding:32px">
+    <div style="max-width:1100px;margin:0 auto">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:24px"><div style="width:28px;height:28px;border-radius:6px;background:#FF3621;display:flex;align-items:center;justify-content:center"><svg width="14" height="14" viewBox="0 0 24 24" fill="white"><path d="M12 2L2 7v10l10 5 10-5V7L12 2zm0 2.5L19 9l-7 3.5L5 9l7-4.5z"/></svg></div><span style="font-size:18px;font-weight:700;color:white">Account Health Check</span></div>
+      <div style="height:4px;background:rgba(255,255,255,0.1);border-radius:2px;overflow:hidden;margin-bottom:12px"><div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#FF3621,#FF6B4A);border-radius:2px;transition:width .5s ease"></div></div>
+      <div style="display:flex;justify-content:space-between;font-size:13px;color:rgba(255,255,255,0.5);margin-bottom:32px"><span>Completed ${rs.idx} of ${rs.total} sections ${rs.name?'<strong style="color:rgba(255,255,255,0.8)">\u2014 '+esc(rs.name)+'</strong>':''}</span><span style="color:#FF6B4A;font-weight:600">${pct}%</span></div>
+      <div style="text-align:center;margin-bottom:40px;padding:24px 32px;border-radius:12px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.06)">
+        <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1.5px;color:#FF6B4A;margin-bottom:10px">Did You Know</div>
+        <div id="dykText" style="font-size:14px;color:rgba(255,255,255,0.75);line-height:1.6;max-width:640px;margin:0 auto;transition:opacity .4s ease">${esc(dykText)}</div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px">${cards}</div>
+    </div>
   </div>`;
 }
 
@@ -104,9 +143,9 @@ function renderApp(content){
   SECTIONS.forEach(s=>{
     const sec=(r?.sections||[]).find(x=>x.section_id===s.id);
     const isSel=state.section===s.id;
-    const badge=sec?.active&&sec?.score!=null?`<span style="font-size:11px;font-weight:600;padding:1px 6px;border-radius:8px;background:${scoreColor(sec.score)};color:white">${Math.round(sec.score)}</span>`:`<span style="font-size:10px;opacity:0.3">N/A</span>`;
+    const badge=sec?.active&&sec?.score!=null?`<span style="font-size:12px;font-weight:600;color:rgba(255,255,255,0.85)">${Math.round(sec.score)}</span>`:`<span style="font-size:10px;opacity:0.3">—</span>`;
     sideItems+=`<div class="sidebar-item" data-section="${s.id}" style="padding:8px 14px;cursor:${sec?.active?'pointer':'default'};display:flex;align-items:center;gap:10px;background:${isSel?'rgba(255,255,255,0.1)':'transparent'};border-left:3px solid ${isSel?'#FF3621':'transparent'};transition:all .15s">
-      <span style="font-size:14px">${s.icon}</span>
+      <span style="display:flex;align-items:center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2L2 7.5V16.5L12 22L22 16.5V7.5L12 2Z" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"/><path d="M12 7L7 9.75V15.25L12 18L17 15.25V9.75L12 7Z" fill="rgba(255,255,255,0.5)"/></svg></span>
       <div style="flex:1;font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.name)}</div>
       ${badge}
     </div>`;
@@ -115,7 +154,7 @@ function renderApp(content){
     <nav style="width:260px;min-width:260px;background:#1B3139;color:white;display:flex;flex-direction:column;overflow:hidden">
       <div id="navHome" style="padding:16px 16px 12px;border-bottom:1px solid rgba(255,255,255,0.1);cursor:pointer">
         <div style="display:flex;align-items:center;gap:8px"><div style="width:28px;height:28px;border-radius:6px;background:#FF3621;display:flex;align-items:center;justify-content:center"><svg width="14" height="14" viewBox="33 0 28.2 30.5" xmlns="http://www.w3.org/2000/svg"><path d="M59.7279 12.5153L47.2039 19.6185L33.8814 12.0502L33.251 12.3884V17.885L47.2039 25.8339L59.7279 18.7306V21.648L47.2039 28.7513L33.8814 21.1829L33.251 21.5212V22.4514L47.2039 30.4002L61.1989 22.4514V16.9548L60.5685 16.6165L47.2039 24.1849L34.7219 17.0816V14.2065L47.2039 21.2675L61.1989 13.3186V7.9066L60.4844 7.52607L47.2039 15.0521L35.3943 8.32941L47.2039 1.64897L56.9541 7.14554L57.8367 6.68044V6.00394L47.2039 0L33.251 7.9066V8.75223L47.2039 16.7011L59.7279 9.59785V12.5153Z" fill="white"/></svg></div><div><div style="font-size:13px;font-weight:600">Health Check</div><div style="font-size:10px;opacity:0.5">Account Diagnostics</div></div></div>
-        ${ov?.overall_score!=null?`<div style="margin-top:12px;display:flex;align-items:center;gap:10px">${renderGaugeSVG(ov.overall_score||0,48,false)}<div><div style="font-size:11px;opacity:0.5">Overall</div><div style="font-size:16px;font-weight:600;color:${scoreColor(ov.overall_score)}">${Math.round(ov.overall_score)}</div></div></div>`:''}
+        ${ov?.overall_score!=null?`<div style="margin-top:12px;display:flex;align-items:center;gap:10px"><div style="width:42px;height:42px;border-radius:50%;border:2px solid rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center"><span style="font-size:16px;font-weight:700;color:white">${Math.round(ov.overall_score)}</span></div><div><div style="font-size:11px;color:white;opacity:0.8">Overall</div><div style="font-size:14px;font-weight:600;color:rgba(255,255,255,0.5)">${scoreLabel(ov.overall_score)}</div></div></div>`:''}
       </div>
       <div style="flex:1;overflow-y:auto;padding:6px 0">${sideItems}</div>
       <div style="padding:12px;border-top:1px solid rgba(255,255,255,0.1);font-size:10px;opacity:0.3">${r?.timestamp?'Last run: '+new Date(r.timestamp).toLocaleString():'Databricks Health Check'}</div>
@@ -155,7 +194,7 @@ function renderInsightsPanel(){
   const mdesc=ins.maturity?.description||'';
   if(!ml&&!Object.keys(ins).length&&!ai.executive_summary)return'';
 
-  const mColors={1:'#DC2626',2:'#D97706',3:'#2563EB',4:'#059669',5:'#7C3AED'};
+  const mColors={1:'#9CA3AF',2:'#6B7280',3:'#475569',4:'#374151',5:'#1B3139'};
   const mc=mColors[ml]||'#9CA3AF';
   let h='';
 
@@ -179,7 +218,7 @@ function renderInsightsPanel(){
     anomalies.forEach(a=>{
       const bg=a.severity==='high'?'#FEF2F2':'#FFFBEB';
       const bc=a.severity==='high'?'#FECACA':'#FDE68A';
-      const ic=a.severity==='high'?'#DC2626':'#D97706';
+      const ic=a.severity==='high'?'#374151':'#6B7280';
       h+=`<div style="background:${bg};border-radius:8px;padding:10px 14px;border:1px solid ${bc};display:flex;align-items:flex-start;gap:8px">
         <span style="color:${ic};flex-shrink:0">\u26A0</span>
         <div><div style="font-size:13px;font-weight:600">${esc(a.title)}</div><div style="font-size:12px;color:#6B7280">${esc(a.message)}</div></div>
@@ -202,7 +241,7 @@ function renderInsightsPanel(){
         else if(last.failure_rate!=null)val=last.failure_rate+'%';
       }
       const arrows={increasing:'\u2191 Trending up',decreasing:'\u2193 Trending down',stable:'\u2192 Stable',insufficient_data:'\u2014 Limited data'};
-      const tColor=t.direction==='decreasing'?'#059669':t.direction==='increasing'?(k==='cost'||k==='job_failures'?'#DC2626':'#059669'):'#9CA3AF';
+      const tColor=t.direction==='decreasing'?'#374151':t.direction==='increasing'?(k==='cost'||k==='job_failures'?'#6B7280':'#374151'):'#9CA3AF';
       h+=`<div class="card" style="padding:12px 14px">
         <div style="display:flex;justify-content:space-between;align-items:center">
           <span style="font-size:11px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.5px;font-weight:600">${esc(t.label)}</span>
@@ -220,9 +259,9 @@ function renderInsightsPanel(){
     h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;margin-bottom:14px">';
     whatif.forEach(s=>{
       h+=`<div style="background:#F0FDF4;border-radius:8px;padding:14px;border:1px solid #BBF7D0">
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span style="color:#059669">\uD83D\uDCB0</span><span style="font-size:13px;font-weight:600;color:#065F46">${esc(s.title)}</span></div>
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span style="color:#374151">\uD83D\uDCB0</span><span style="font-size:13px;font-weight:600;color:#065F46">${esc(s.title)}</span></div>
         <div style="font-size:12px;color:#047857;margin-bottom:4px">${esc(s.description)}</div>
-        <div style="font-size:11px"><span style="color:#059669;font-weight:600">${esc(s.estimated_savings)}</span> <span style="color:#6B7280">\u00B7 Effort: ${esc(s.effort)}</span></div>
+        <div style="font-size:11px"><span style="color:#374151;font-weight:600">${esc(s.estimated_savings)}</span> <span style="color:#6B7280">\u00B7 Effort: ${esc(s.effort)}</span></div>
       </div>`;
     });
     h+='</div>';
@@ -262,10 +301,10 @@ function renderScoreBooster(){
   opps.slice(0,3).forEach(opp=>{
     const rec=opp.recommendation||{};
     const docLink=rec.docs_url?`<a href="${esc(rec.docs_url)}" target="_blank" style="font-size:11px;color:#2563EB;margin-top:6px;display:inline-block">Get started \u2197</a>`:'';
-    oppCards+=`<div class="card" style="padding:14px;flex:1;min-width:220px;border-top:3px solid #059669">
+    oppCards+=`<div class="card" style="padding:14px;flex:1;min-width:220px;border-top:3px solid #1B3139">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <span style="font-size:13px;font-weight:600">${esc(opp.name)}</span>
-        <span style="font-size:12px;font-weight:700;color:#059669;background:#ECFDF5;padding:2px 8px;border-radius:10px">+${opp.projected_boost} pts</span>
+        <span style="font-size:12px;font-weight:700;color:#1B3139;background:#F1F5F9;padding:2px 8px;border-radius:10px">+${opp.projected_boost} pts</span>
       </div>
       <div style="font-size:12px;color:#6B7280;margin-bottom:4px">${esc(opp.current_value||'')}</div>
       <div style="font-size:11px;color:#9CA3AF;font-style:italic;margin-bottom:4px">${esc(opp.peer_benchmark||'')}</div>
@@ -276,16 +315,16 @@ function renderScoreBooster(){
   const moreCount=sb.opportunity_count-3;
   const moreLink=moreCount>0?`<div style="text-align:center;margin-top:12px"><a href="#" id="viewAllAdoption" style="font-size:13px;color:#2563EB;font-weight:500">See all ${sb.opportunity_count} optimization opportunities \u2192</a></div>`:'';
 
-  return `<div class="card" style="padding:24px;margin-top:24px;background:linear-gradient(135deg,#F0FDF4 0%,#ECFDF5 40%,#F5F7FA 100%);border:1px solid #BBF7D0">
+  return `<div class="card" style="padding:24px;margin-top:24px;background:linear-gradient(135deg,#F8FAFC 0%,#F1F5F9 100%);border:1px solid #CBD5E1">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px">
       <div>
-        <div style="font-size:16px;font-weight:700;color:#166534">\u{1F680} Score Booster</div>
+        <div style="font-size:16px;font-weight:700;color:#1B3139">\u{1F680} Score Booster</div>
         <div style="font-size:13px;color:#6B7280;margin-top:2px">Adopt these capabilities to unlock <strong>+${boost} points</strong></div>
       </div>
       <div style="display:flex;align-items:center;gap:16px">
         <div style="text-align:center"><div style="font-size:24px;font-weight:700;color:#374151">${cur}</div><div style="font-size:11px;color:#9CA3AF">Current</div></div>
         <div style="font-size:18px;color:#9CA3AF">\u2192</div>
-        <div style="text-align:center"><div style="font-size:24px;font-weight:700;color:#059669">${pot}</div><div style="font-size:11px;color:#059669">Potential</div></div>
+        <div style="text-align:center"><div style="font-size:24px;font-weight:700;color:#1B3139">${pot}</div><div style="font-size:11px;color:#374151">Potential</div></div>
       </div>
     </div>
     <div style="margin-bottom:20px;position:relative">
@@ -312,20 +351,21 @@ function renderDashboard(){
     const issues=(sec.checks||[]).filter(c=>c.status==='fail'||c.status==='partial').length;
     const isAdoption=sec.section_id==='adoption';
     const adoptionBoost=isAdoption&&state.results&&state.results.score_booster?state.results.score_booster.total_boost:0;
-    const scoreHtml=isAdoption&&adoptionBoost>0?`<span class="fade-in" style="font-size:20px;font-weight:700;color:#059669;font-variant-numeric:tabular-nums">+${adoptionBoost} pts</span>`:sec.active&&sec.score!=null?`<span class="fade-in" style="font-size:26px;font-weight:700;color:${scoreColor(sec.score)};font-variant-numeric:tabular-nums">${Math.round(sec.score)}</span>`:`<span style="font-size:12px;color:#9CA3AF">N/A</span>`;
-    const bar=sec.active?`<div style="margin-top:14px;height:4px;background:#F5F7FA;border-radius:2px;overflow:hidden"><div style="height:100%;width:${sec.score||0}%;background:${scoreColor(sec.score||0)};border-radius:2px;transition:width .6s ease"></div></div><div style="margin-top:8px;font-size:12px;color:${issues>0?'#D97706':'#059669'}">${issues>0?'\u26A0 '+issues+' check'+(issues>1?'s':'')+' need attention':'\u2705 All checks passing'}</div>`
+    const scoreHtml=isAdoption&&adoptionBoost>0?`<span class="fade-in" style="font-size:20px;font-weight:700;color:#1B3139;font-variant-numeric:tabular-nums">+${adoptionBoost} pts</span>`:sec.active&&sec.score!=null?`<span class="fade-in" style="font-size:26px;font-weight:700;color:${scoreColor(sec.score)};font-variant-numeric:tabular-nums">${Math.round(sec.score)}</span>`:`<span style="font-size:12px;color:#9CA3AF">N/A</span>`;
+    const bar=sec.active?`<div style="margin-top:14px;height:4px;background:#F5F7FA;border-radius:2px;overflow:hidden"><div style="height:100%;width:${sec.score||0}%;background:${scoreColor(sec.score||0)};border-radius:2px;transition:width .6s ease"></div></div><div style="margin-top:8px;font-size:12px;color:${issues>0?'#6B7280':'#374151'}">${issues>0?'\u26A0 '+issues+' check'+(issues>1?'s':'')+' need attention':'\u2705 All checks passing'}</div>`
       :`<div style="margin-top:10px;font-size:12px;color:#9CA3AF">Not Evaluated \u2014 No Significant Usage</div>`;
-    cards+=`<div class="card section-card" data-sid="${sec.section_id}" style="padding:18px;cursor:${sec.active?'pointer':'default'};opacity:${sec.active?1:0.5};transition:all .2s">
+    const adoptStyle=isAdoption?'grid-column:1/-1;background:linear-gradient(135deg,#F8FAFC,#F1F5F9);border:1px solid #CBD5E1':'';
+    cards+=`<div class="card section-card" data-sid="${sec.section_id}" style="padding:18px;cursor:${sec.active?'pointer':'default'};opacity:${sec.active?1:0.5};transition:all .2s;${adoptStyle}">
       <div style="display:flex;justify-content:space-between;align-items:flex-start"><div style="display:flex;align-items:center;gap:10px"><span style="font-size:22px">${meta.icon}</span><div><div style="font-size:14px;font-weight:600">${esc(meta.name)}</div><div style="font-size:11px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.5px">${sec.section_type}</div></div></div>${scoreHtml}</div>${bar}</div>`;
   });
   let recs='';
   (r.top_recommendations||[]).slice(0,5).forEach(rec=>{
-    const pc=rec.priority==='high'?'#DC2626':rec.priority==='medium'?'#D97706':'#2563EB';
+    const pc=rec.priority==='high'?'#374151':rec.priority==='medium'?'#6B7280':'#9CA3AF';
     recs+=`<div class="card" style="padding:16px;border-left:4px solid ${pc};margin-bottom:8px"><div style="display:flex;justify-content:space-between;gap:12px"><div style="flex:1"><div style="font-size:13px;font-weight:600;margin-bottom:4px">${esc(rec.action||'')}</div><div style="font-size:12px;color:#6B7280">${esc(rec.impact||'')}</div></div><span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;background:${pc}15;color:${pc};text-transform:uppercase;white-space:nowrap">${rec.priority||'medium'}</span></div>${rec.docs_url?`<a href="${esc(rec.docs_url)}" target="_blank" style="font-size:12px;color:#2563EB;margin-top:6px;display:inline-block">Documentation \u2197</a>`:''}</div>`;
   });
   return `<div style="padding:32px;max-width:1200px;margin:0 auto">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;flex-wrap:wrap;gap:8px"><div><h1 style="font-size:24px;font-weight:700;margin:0">Account Health Dashboard</h1><p style="font-size:13px;color:#6B7280;margin-top:4px">${r.timestamp?new Date(r.timestamp).toLocaleString():''}</p></div><div style="display:flex;gap:8px"><button id="checklistBtn" class="btn card" style="padding:8px 16px;font-size:13px;font-weight:500">\u2611 Export Checklist</button><button id="exportBtn" class="btn card" style="padding:8px 16px;font-size:13px;font-weight:500">\u2B07 Export Report</button></div></div>
-    <div class="card" style="padding:28px;display:flex;align-items:center;gap:40px;margin-bottom:28px">${renderGaugeSVG(ov.overall_score||0,140,true)}<div><h2 style="font-size:20px;font-weight:600;margin:0 0 8px">Overall Health Score</h2><div style="display:flex;gap:20px"><div><div style="font-size:22px;font-weight:700">${active.length}</div><div style="font-size:12px;color:#6B7280">Analyzed</div></div><div><div style="font-size:22px;font-weight:700;color:#059669">${active.filter(s=>(s.score||0)>=90).length}</div><div style="font-size:12px;color:#6B7280">Excellent</div></div><div><div style="font-size:22px;font-weight:700;color:#D97706">${active.filter(s=>(s.score||0)>=50&&(s.score||0)<90).length}</div><div style="font-size:12px;color:#6B7280">Needs Work</div></div><div><div style="font-size:22px;font-weight:700;color:#DC2626">${active.filter(s=>(s.score||0)<50).length}</div><div style="font-size:12px;color:#6B7280">Critical</div></div></div></div></div>
+    <div class="card" style="padding:28px;display:flex;align-items:center;gap:40px;margin-bottom:28px">${renderGaugeSVG(ov.overall_score||0,140,true)}<div><h2 style="font-size:20px;font-weight:600;margin:0 0 8px">Overall Health Score</h2><div style="display:flex;gap:20px"><div><div style="font-size:22px;font-weight:700">${active.length}</div><div style="font-size:12px;color:#6B7280">Analyzed</div></div><div><div style="font-size:22px;font-weight:700;color:#1B3139">${active.filter(s=>(s.score||0)>=90).length}</div><div style="font-size:12px;color:#6B7280">Excellent</div></div><div><div style="font-size:22px;font-weight:700;color:#6B7280">${active.filter(s=>(s.score||0)>=50&&(s.score||0)<90).length}</div><div style="font-size:12px;color:#6B7280">Needs Work</div></div><div><div style="font-size:22px;font-weight:700;color:#9CA3AF">${active.filter(s=>(s.score||0)<50).length}</div><div style="font-size:12px;color:#6B7280">Critical</div></div></div></div></div>
     ${renderInsightsPanel()}
     <h3 style="font-size:16px;font-weight:600;margin:0 0 12px">Sections</h3>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-bottom:32px">${cards}</div>
@@ -378,9 +418,9 @@ function renderAllDetails(det, checkStatus){
 
   // Render scalar/object details as key-value pairs
   const peerBenchmark=det.peer_benchmark||'';
-  if(peerBenchmark) html+=`<div style="margin-top:8px;padding:10px 14px;background:#EFF6FF;border:1px solid #BFDBFE;border-radius:6px;font-size:12px;color:#1E40AF"><strong>\u{1F465} Peer Insight:</strong> ${esc(peerBenchmark)}</div>`;
+  if(peerBenchmark) html+=`<div style="margin-top:8px;padding:10px 14px;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:6px;font-size:12px;color:#374151"><strong>\u{1F465} Peer Insight:</strong> ${esc(peerBenchmark)}</div>`;
   const projected=det.projected_score_boost||0;
-  if(projected>0) html+=`<div style="margin-top:6px;padding:8px 14px;background:#ECFDF5;border:1px solid #BBF7D0;border-radius:6px;font-size:12px;color:#166534"><strong>\u{1F4C8} Score Impact:</strong> Adopting this could add <strong>+${projected} points</strong> to your overall health score</div>`;
+  if(projected>0) html+=`<div style="margin-top:6px;padding:8px 14px;background:#F1F5F9;border:1px solid #CBD5E1;border-radius:6px;font-size:12px;color:#1B3139"><strong>\u{1F4C8} Score Impact:</strong> Adopting this could add <strong>+${projected} points</strong> to your overall health score</div>`;
   const scalarKeys = Object.keys(det).filter(k => !Array.isArray(det[k]) && k !== 'summary' && k !== 'peer_benchmark' && k !== 'projected_score_boost' && det[k] !== null && det[k] !== undefined && typeof det[k] !== 'object');
   if(scalarKeys.length > 0 && arrayKeys.length === 0){
     const items = scalarKeys.map(k => ({metric: k.replace(/_/g,' '), value: det[k]}));
@@ -404,15 +444,15 @@ function renderSection(){
     chks.forEach(c=>{
       const icon=c.status==='pass'?'\u2705':c.status==='partial'?'\u26A0\uFE0F':c.status==='fail'?'\u274C':c.status==='info'?'\u2139\uFE0F':'\u2796';
       const sc=c.status==='info'?'INFO':c.status==='not_evaluated'?'N/A':c.score;
-      const scColor=c.score===100?'#059669':c.score===50?'#D97706':c.status==='info'?'#6B7280':'#DC2626';
+      const scColor=c.score===100?'#1B3139':c.score===50?'#6B7280':c.status==='info'?'#9CA3AF':'#9CA3AF';
       // Info badge explanation
       const infoBadge=c.status==='info'?'<span style="font-size:10px;color:#6B7280;background:#F3F4F6;padding:1px 6px;border-radius:4px;margin-left:6px" title="Informational metric — not scored, click for details">Informational</span>':'';
       // Recommendation
       let recHtml='';
       if(c.recommendation){
         const rc=c.recommendation;
-        const pc=rc.priority==='high'?'#DC2626':rc.priority==='medium'?'#D97706':'#2563EB';
-        recHtml=`<div style="padding:12px;border-left:3px solid ${pc};background:#F9FAFB;border-radius:4px;margin-bottom:8px"><div style="font-size:12px;font-weight:600;margin-bottom:4px">${esc(rc.action||'')}</div><div style="font-size:11px;color:#6B7280">${esc(rc.impact||'')}</div>${rc.estimated_savings?`<div style="font-size:11px;color:#059669;margin-top:2px">\u{1F4B0} ${esc(rc.estimated_savings)}</div>`:''}${rc.docs_url?`<a href="${esc(rc.docs_url)}" target="_blank" style="font-size:11px;color:#2563EB;margin-top:4px;display:inline-block">Documentation \u2197</a>`:''}${rc.sql_command?`<div style="margin-top:4px;font-size:10px;font-family:monospace;background:#F3F4F6;padding:4px 8px;border-radius:4px">${esc(rc.sql_command)}</div>`:''}</div>`;
+        const pc=rc.priority==='high'?'#374151':rc.priority==='medium'?'#6B7280':'#9CA3AF';
+        recHtml=`<div style="padding:12px;border-left:3px solid ${pc};background:#F9FAFB;border-radius:4px;margin-bottom:8px"><div style="font-size:12px;font-weight:600;margin-bottom:4px">${esc(rc.action||'')}</div><div style="font-size:11px;color:#6B7280">${esc(rc.impact||'')}</div>${rc.estimated_savings?`<div style="font-size:11px;color:#374151;margin-top:2px">\u{1F4B0} ${esc(rc.estimated_savings)}</div>`:''}${rc.docs_url?`<a href="${esc(rc.docs_url)}" target="_blank" style="font-size:11px;color:#2563EB;margin-top:4px;display:inline-block">Documentation \u2197</a>`:''}${rc.sql_command?`<div style="margin-top:4px;font-size:10px;font-family:monospace;background:#F3F4F6;padding:4px 8px;border-radius:4px">${esc(rc.sql_command)}</div>`:''}</div>`;
       }
       // Details — universal renderer for ALL checks
       const detailsHtml = renderAllDetails(c.details||{}, c.status);
@@ -423,7 +463,7 @@ function renderSection(){
   });
   return `<div style="padding:32px;max-width:960px;margin:0 auto">
     <button id="backBtn" class="btn" style="background:none;font-size:13px;color:#6B7280;padding:6px 0;margin-bottom:20px">\u2190 Back to Dashboard</button>
-    <div class="card" style="padding:24px;display:flex;align-items:center;gap:28px;margin-bottom:24px">${renderGaugeSVG(sec.score||0,100,false)}<div><h1 style="font-size:22px;font-weight:700;margin:0 0 4px">${esc(sec.section_name||sec.name||'')}</h1><div style="display:flex;gap:14px;margin-top:8px"><span style="font-size:13px;color:#6B7280">\u{1F7E2} <strong style="color:#059669">${scored.filter(c=>c.score===100).length}</strong> Pass</span><span style="font-size:13px;color:#6B7280">\u{1F7E1} <strong style="color:#D97706">${scored.filter(c=>c.score===50).length}</strong> Partial</span><span style="font-size:13px;color:#6B7280">\u{1F534} <strong style="color:#DC2626">${scored.filter(c=>c.score===0&&c.status==='fail').length}</strong> Fail</span><span style="font-size:13px;color:#6B7280">\u2139\uFE0F <strong style="color:#6B7280">${checks.filter(c=>c.status==='info').length}</strong> Info</span></div></div></div>
+    <div class="card" style="padding:24px;display:flex;align-items:center;gap:28px;margin-bottom:24px">${renderGaugeSVG(sec.score||0,100,false)}<div><h1 style="font-size:22px;font-weight:700;margin:0 0 4px">${esc(sec.section_name||sec.name||'')}</h1><div style="display:flex;gap:14px;margin-top:8px"><span style="font-size:13px;color:#6B7280">\u{1F7E2} <strong style="color:#1B3139">${scored.filter(c=>c.score===100).length}</strong> Pass</span><span style="font-size:13px;color:#6B7280">\u{1F7E1} <strong style="color:#6B7280">${scored.filter(c=>c.score===50).length}</strong> Partial</span><span style="font-size:13px;color:#6B7280">\u{1F534} <strong style="color:#9CA3AF">${scored.filter(c=>c.score===0&&c.status==='fail').length}</strong> Fail</span><span style="font-size:13px;color:#6B7280">\u2139\uFE0F <strong style="color:#6B7280">${checks.filter(c=>c.status==='info').length}</strong> Info</span></div></div></div>
     ${groups}
   </div>`;
 }

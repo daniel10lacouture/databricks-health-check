@@ -387,48 +387,57 @@ class AdoptionCheckRunner(BaseCheckRunner):
         try:
             rows = self.executor.execute("""
                 SELECT
-                    COUNT(CASE WHEN action_name LIKE '%scim%' OR action_name LIKE '%SCIM%'
-                               OR service_name = 'unityCatalog' AND action_name = 'provisionUser'
-                          THEN 1 END) AS scim_events,
-                    COUNT(CASE WHEN action_name IN ('accountIdentityManagement',
-                               'setAccountIdentityFederation', 'updateIdentityProvider')
-                               OR (service_name = 'accounts' AND action_name LIKE '%identity%')
-                          THEN 1 END) AS aim_events
+                    COUNT(CASE WHEN action_name = 'samlLogin' THEN 1 END) AS sso_logins,
+                    COUNT(CASE WHEN action_name = 'tokenLogin' THEN 1 END) AS token_logins,
+                    COUNT(CASE WHEN action_name IN ('add', 'updateUser', 'deactivateUser', 'activateUser') THEN 1 END) AS user_mgmt_events,
+                    COUNT(CASE WHEN action_name IN ('createGroup', 'addPrincipalToGroup', 'addPrincipalsToGroup', 'removePrincipalFromGroup') THEN 1 END) AS group_mgmt_events,
+                    COUNT(CASE WHEN action_name = 'setAdmin' THEN 1 END) AS admin_changes
                 FROM system.access.audit
                 WHERE event_time >= DATEADD(DAY, -30, CURRENT_DATE())
-                  AND (action_name LIKE '%scim%' OR action_name LIKE '%SCIM%'
-                       OR action_name LIKE '%identity%' OR action_name LIKE '%provision%')""")
+                  AND service_name = 'accounts'""")
         except Exception:
             return CheckResult("13.3.1", "Automatic Identity Management",
                 "Governance & Security Maturity", 0, "info",
                 "Could not query audit logs for identity events", "AIM enabled, SCIM deprecated")
 
         r = rows[0] if rows else {}
-        scim = r.get("scim_events", 0) or 0
-        aim = r.get("aim_events", 0) or 0
+        sso = r.get("sso_logins", 0) or 0
+        token = r.get("token_logins", 0) or 0
+        user_mgmt = r.get("user_mgmt_events", 0) or 0
+        group_mgmt = r.get("group_mgmt_events", 0) or 0
+        admin_changes = r.get("admin_changes", 0) or 0
+        total_logins = sso + token
+        sso_pct = round(sso / total_logins * 100, 1) if total_logins > 0 else 0
+        has_automated_provisioning = user_mgmt > 100
+        has_group_mgmt = group_mgmt > 0
 
-        if aim > 0 and scim == 0:
+        if sso_pct >= 50 and has_automated_provisioning and has_group_mgmt:
             score, status = 100, "pass"
-        elif aim > 0:
+        elif sso_pct >= 30 or has_automated_provisioning:
             score, status = 50, "partial"
         else:
             score, status = 0, "fail"
 
-        benchmark = self._peer_benchmark("workspaces", "migrated to Automatic Identity Management as a security best practice")
+        benchmark = self._peer_benchmark("workspaces", "SSO-first authentication with automated identity provisioning")
 
         rec = None
         if score < 100:
+            actions = []
+            if sso_pct < 50: actions.append(f"Increase SSO adoption (currently {sso_pct}% of logins)")
+            if not has_automated_provisioning: actions.append("Enable Automatic Identity Management for automated user/group sync")
+            if not has_group_mgmt: actions.append("Set up group-based access management from your IdP")
             rec = Recommendation(
-                action="Migrate from legacy SCIM provisioning to Automatic Identity Management (AIM). AIM auto-syncs users/groups from your IdP without SCIM connectors.",
-                impact="Eliminates SCIM maintenance overhead, reduces identity sync failures, and provides more reliable user lifecycle management.",
-                priority="high" if scim > 0 and aim == 0 else "medium",
+                action=". ".join(actions) + ".",
+                impact="SSO with automated provisioning ensures consistent identity management, reduces manual overhead, and improves security posture.",
+                priority="high" if sso_pct < 30 else "medium",
                 docs_url="https://docs.databricks.com/en/admin/users-groups/best-practices.html")
 
-        return CheckResult("13.3.1", "Automatic Identity Management",
+        return CheckResult("13.3.1", "Identity Management Maturity",
             "Governance & Security Maturity", score, status,
-            f"SCIM events: {scim}, AIM events: {aim} (30d)",
-            "Automatic Identity Management active, no legacy SCIM",
-            details={"scim_events": scim, "aim_events": aim,
+            f"SSO: {sso_pct}% of logins, {user_mgmt:,} user provisioning, {group_mgmt:,} group events (30d)",
+            "SSO-first auth with automated identity provisioning",
+            details={"sso_logins": sso, "token_logins": token, "sso_pct": sso_pct,
+                     "user_mgmt_events": user_mgmt, "group_mgmt_events": group_mgmt, "admin_changes": admin_changes,
                      "peer_benchmark": benchmark,
                      "projected_score_boost": 2 if score < 100 else 0},
             recommendation=rec)
@@ -585,7 +594,7 @@ class AdoptionCheckRunner(BaseCheckRunner):
         """Check if clusters are running recent Databricks Runtime versions."""
         try:
             rows = self.executor.execute("""
-                SELECT spark_version, cluster_name, cluster_id
+                SELECT dbr_version, cluster_name, cluster_id
                 FROM system.compute.clusters
                 WHERE delete_time IS NULL
                   AND cluster_source IN ('UI', 'API')""")
@@ -598,7 +607,7 @@ class AdoptionCheckRunner(BaseCheckRunner):
         # Consider anything older than DBR 14.x as outdated
         outdated = []
         for r in rows:
-            sv = r.get("spark_version", "") or ""
+            sv = r.get("dbr_version", "") or ""
             # Extract major version number
             try:
                 major = int(sv.split(".")[0])
@@ -618,7 +627,7 @@ class AdoptionCheckRunner(BaseCheckRunner):
 
         benchmark = self._peer_benchmark("workspaces", "clusters running on current LTS Databricks Runtime versions")
 
-        nc = [{"cluster_name": r.get("cluster_name", ""), "spark_version": r.get("spark_version", ""),
+        nc = [{"cluster_name": r.get("cluster_name", ""), "dbr_version": r.get("dbr_version", ""),
                "action": "Upgrade to latest LTS runtime"} for r in outdated[:15]]
 
         rec = None
@@ -691,13 +700,14 @@ class AdoptionCheckRunner(BaseCheckRunner):
             rows = self.executor.execute("""
                 SELECT
                     COUNT(*) AS total_queries,
-                    COUNT(CASE WHEN LOWER(statement_text) LIKE '%ai\_query%' ESCAPE '\\'
-                               OR LOWER(statement_text) LIKE '%ai\_generate%' ESCAPE '\\'
-                               OR LOWER(statement_text) LIKE '%ai\_classify%' ESCAPE '\\'
-                               OR LOWER(statement_text) LIKE '%ai\_extract%' ESCAPE '\\'
-                               OR LOWER(statement_text) LIKE '%ai\_summarize%' ESCAPE '\\'
-                               OR LOWER(statement_text) LIKE '%ai\_translate%' ESCAPE '\\'
-                               OR LOWER(statement_text) LIKE '%ai\_forecast%' ESCAPE '\\'
+                    COUNT(CASE WHEN LOWER(statement_text) LIKE '%ai_query(%'
+                               OR LOWER(statement_text) LIKE '%ai_generate(%'
+                               OR LOWER(statement_text) LIKE '%ai_classify(%'
+                               OR LOWER(statement_text) LIKE '%ai_extract(%'
+                               OR LOWER(statement_text) LIKE '%ai_summarize(%'
+                               OR LOWER(statement_text) LIKE '%ai_translate(%'
+                               OR LOWER(statement_text) LIKE '%ai_forecast(%'
+                               OR LOWER(statement_text) LIKE '%ai_similarity(%'
                           THEN 1 END) AS ai_queries
                 FROM system.query.history
                 WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE())""")
@@ -761,6 +771,21 @@ class AdoptionCheckRunner(BaseCheckRunner):
         benchmark = self._peer_benchmark("workspaces", "active Delta Sharing for cross-organization data collaboration")
 
         rec = None
+        if cnt == 0:
+            return CheckResult("13.6.1", "Delta Sharing Activity",
+                "Data Collaboration", score, status,
+                "No materialization events detected",
+                "Active Delta Sharing with regular materialization",
+                details={"materialization_events": 0,
+                         "summary": "No Delta Sharing materializations found. This may mean Delta Sharing is not yet configured or recipients have not accessed shared data.",
+                         "peer_benchmark": benchmark,
+                         "projected_score_boost": 1},
+                recommendation=Recommendation(
+                    action="Set up Delta Sharing to enable secure data collaboration with partners and across teams without copying data.",
+                    impact="Enables cross-organization data exchange, multi-cloud access, and data monetization without ETL.",
+                    priority="medium",
+                    docs_url="https://docs.databricks.com/en/delta-sharing/index.html"))
+
         if cnt < 100:
             rec = Recommendation(
                 action="Expand Delta Sharing for secure cross-team and cross-organization data collaboration. Open protocol, no data copying required.",

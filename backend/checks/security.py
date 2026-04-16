@@ -399,12 +399,12 @@ class SecurityCheckRunner(BaseCheckRunner):
         """Analyze denied inbound network requests."""
         try:
             rows = self.executor.execute("""
-                SELECT source_ip_address, COUNT(*) AS denied_requests,
+                SELECT source.ip AS source_ip, policy_outcome, COUNT(*) AS denied_requests,
                        MIN(event_time) AS first_seen, MAX(event_time) AS last_seen,
                        COUNT(DISTINCT date_format(event_time, 'yyyy-MM-dd')) AS active_days
                 FROM system.access.inbound_network
-                WHERE event_time >= DATEADD(DAY, -30, CURRENT_DATE()) AND is_denied = true
-                GROUP BY source_ip_address ORDER BY denied_requests DESC LIMIT 30
+                WHERE event_time >= DATEADD(DAY, -30, CURRENT_DATE()) AND policy_outcome = 'DENY'
+                GROUP BY source.ip, policy_outcome ORDER BY denied_requests DESC LIMIT 30
             """)
         except Exception as e:
             return CheckResult("5.5.1", "Denied inbound traffic (30d)", "Network Traffic Analysis",
@@ -412,7 +412,9 @@ class SecurityCheckRunner(BaseCheckRunner):
 
         if not rows:
             return CheckResult("5.5.1", "Denied inbound traffic (30d)", "Network Traffic Analysis",
-                100, "pass", "No denied inbound traffic detected or table not available", "Monitor denied requests")
+                100, "pass", "No denied inbound traffic detected in the last 30 days",
+                "Monitor denied requests",
+                details={"summary": "No DENY policy outcomes found in inbound network logs. This means either no unauthorized access attempts occurred or inbound network policies are not configured."})
 
         total_denied = sum(int(r.get("denied_requests", 0) or 0) for r in rows)
         unique_ips = len(rows)
@@ -421,7 +423,7 @@ class SecurityCheckRunner(BaseCheckRunner):
         elif unique_ips > 10: score, status = 40, "fail"
         else: score, status = 50, "partial"
 
-        nc = [{"source_ip": r.get("source_ip_address", ""), "denied_requests": r.get("denied_requests", 0),
+        nc = [{"source_ip": r.get("source_ip", ""), "denied_requests": r.get("denied_requests", 0),
                "active_days": r.get("active_days", 0), "last_seen": str(r.get("last_seen", ""))[:19]} for r in rows[:15]]
 
         rec = None
@@ -439,12 +441,12 @@ class SecurityCheckRunner(BaseCheckRunner):
         """Audit outbound network connections."""
         try:
             rows = self.executor.execute("""
-                SELECT destination_hostname, COUNT(*) AS connection_count,
-                       COUNT(DISTINCT source_ip_address) AS source_ips,
+                SELECT destination, destination_type, COUNT(*) AS connection_count,
+                       COUNT(DISTINCT network_source_type) AS source_types,
                        COUNT(DISTINCT date_format(event_time, 'yyyy-MM-dd')) AS active_days
                 FROM system.access.outbound_network
                 WHERE event_time >= DATEADD(DAY, -30, CURRENT_DATE())
-                GROUP BY destination_hostname ORDER BY connection_count DESC LIMIT 30
+                GROUP BY destination, destination_type ORDER BY connection_count DESC LIMIT 30
             """)
         except Exception as e:
             return CheckResult("5.5.2", "Outbound network audit (30d)", "Network Traffic Analysis",
@@ -456,15 +458,15 @@ class SecurityCheckRunner(BaseCheckRunner):
 
         total_destinations = len(rows)
         total_connections = sum(int(r.get("connection_count", 0) or 0) for r in rows)
-        nc = [{"destination": r.get("destination_hostname", ""), "connections": r.get("connection_count", 0),
-               "source_ips": r.get("source_ips", 0), "active_days": r.get("active_days", 0)} for r in rows[:20]]
+        nc = [{"destination": r.get("destination", ""), "type": r.get("destination_type", ""),
+               "connections": r.get("connection_count", 0), "active_days": r.get("active_days", 0)} for r in rows[:20]]
 
         return CheckResult("5.5.2", "Outbound network audit (30d)", "Network Traffic Analysis",
             None, "info", f"{total_connections:,} connections to {total_destinations} destinations",
             "Review external destinations",
             details={"non_conforming": nc, "summary": "Review outbound destinations for unauthorized data exfiltration risk"},
             recommendation=Recommendation(
-                action=f"Review {total_destinations} outbound destinations. Ensure all external endpoints are authorized.",
+                action=f"Review {total_destinations} outbound destinations. Ensure all external endpoints are authorized and expected.",
                 impact="Outbound network monitoring is critical for detecting data exfiltration and unauthorized API calls.",
                 priority="medium", docs_url="https://docs.databricks.com/en/security/network/classic/egress.html"))
 
