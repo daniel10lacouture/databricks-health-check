@@ -179,6 +179,173 @@ def _compute_score_booster(overall: dict, section_results: list) -> dict:
     }
 
 
+
+def _compute_burn_rate(section_results: list) -> dict:
+    """
+    Compute the real-time burn rate — dollars being wasted per second.
+    
+    Extracts waste signals from specific checks:
+    - 4.5.1 CSP infra cost (eliminable via serverless)
+    - 4.5.2 Idle cluster burn (auto-termination/serverless)
+    - 4.5.3 Warehouse idle time (serverless warehouses)
+    - 4.1.2 All-purpose compute for jobs (job compute migration)
+    - 4.2.1 Idle warehouses (auto-stop)
+    - 4.2.2 Idle clusters (auto-termination)
+    """
+    import re as _re
+
+    def _extract_dollar(text, patterns):
+        """Extract dollar amount from check current_value or details."""
+        if not text:
+            return 0
+        for pat in patterns:
+            m = _re.search(pat, str(text))
+            if m:
+                val = m.group(1).replace(",", "")
+                try:
+                    return float(val)
+                except (ValueError, TypeError):
+                    pass
+        return 0
+
+    def _extract_hours(text):
+        """Extract hours from text like '1,234 idle node-hours'."""
+        m = _re.search(r"([\d,]+(?:\.\d+)?)\s*idle\s*(?:node-)?hours", str(text))
+        if m:
+            try:
+                return float(m.group(1).replace(",", ""))
+            except (ValueError, TypeError):
+                pass
+        return 0
+
+    waste_sources = []
+    checks_by_id = {}
+
+    for sec in section_results:
+        for check in sec.get("checks", []):
+            checks_by_id[check.get("check_id", "")] = check
+
+    # 1. CSP infrastructure cost (monthly, fully eliminable via serverless)
+    c = checks_by_id.get("4.5.1", {})
+    cv = c.get("current_value", "")
+    csp_monthly = _extract_dollar(cv, [r"\$([\d,.]+)\s*in"])
+    if csp_monthly > 0:
+        waste_sources.append({
+            "id": "csp_infra",
+            "label": "Migrate to serverless compute",
+            "description": "Eliminate CSP infrastructure charges (EC2/VMs) by using serverless — compute is fully managed and included in pricing.",
+            "monthly_waste": csp_monthly,
+            "per_second": csp_monthly / 30 / 24 / 3600,
+            "category": "serverless_migration",
+            "docs_url": "https://docs.databricks.com/en/compute/serverless.html"
+        })
+
+    # 2. Idle cluster burn (monthly estimate from check)
+    c = checks_by_id.get("4.5.2", {})
+    cv = c.get("current_value", "")
+    idle_waste = _extract_dollar(cv, [r"~?\$([\d,.]+)\s*(?:estimated|waste)"])
+    if idle_waste > 0:
+        waste_sources.append({
+            "id": "idle_clusters",
+            "label": "Enable auto-termination on all clusters",
+            "description": "Clusters running at <5% CPU are burning compute. Auto-termination shuts them down after idle periods.",
+            "monthly_waste": idle_waste,
+            "per_second": idle_waste / 30 / 24 / 3600,
+            "category": "auto_termination",
+            "docs_url": "https://docs.databricks.com/en/compute/configure.html#auto-termination"
+        })
+
+    # 3. Warehouse idle time (estimate: idle_hours * $2/hour average)
+    c = checks_by_id.get("4.5.3", {})
+    cv = c.get("current_value", "")
+    idle_hours = _extract_hours(cv)
+    if idle_hours > 0:
+        wh_waste = idle_hours * 2.0  # conservative $2/hour estimate
+        waste_sources.append({
+            "id": "warehouse_idle",
+            "label": "Switch to serverless SQL warehouses",
+            "description": "Serverless warehouses have zero idle cost and start in under 2 seconds. Classic warehouses charge while idle.",
+            "monthly_waste": wh_waste,
+            "per_second": wh_waste / 30 / 24 / 3600,
+            "category": "serverless_warehouses",
+            "docs_url": "https://docs.databricks.com/en/compute/sql-warehouse/serverless.html"
+        })
+
+    # 4. All-purpose compute for jobs (check 4.1.2)
+    c = checks_by_id.get("4.1.2", {})
+    cv = c.get("current_value", "")
+    # Look for percentage of all-purpose usage and estimate waste
+    ap_pct_match = _re.search(r"(\d+(?:\.\d+)?)%\s*all-purpose", str(cv))
+    if ap_pct_match:
+        ap_pct = float(ap_pct_match.group(1))
+        # Estimate: all-purpose is ~2x the cost of jobs compute for same workload
+        # Get total DBUs from details if available
+        details = c.get("details", {})
+        nc = details.get("non_conforming", [])
+        ap_dbus = 0
+        for item in nc:
+            val = str(item.get("all_purpose_dbus", item.get("total_dbus", "0")))
+            val = val.replace(",", "")
+            try:
+                ap_dbus += float(val)
+            except (ValueError, TypeError):
+                pass
+        if ap_dbus > 0:
+            # ~30% premium for all-purpose vs jobs compute
+            ap_waste = ap_dbus * 0.15 * 0.30  # 30% of list price delta, conservative
+            if ap_waste > 100:
+                waste_sources.append({
+                    "id": "job_compute",
+                    "label": "Move jobs to dedicated job clusters",
+                    "description": "All-purpose clusters cost ~2x more than job clusters for the same workload. Switching saves 30-50% on job compute.",
+                    "monthly_waste": ap_waste,
+                    "per_second": ap_waste / 30 / 24 / 3600,
+                    "category": "right_compute",
+                    "docs_url": "https://docs.databricks.com/en/workflows/jobs/use-compute.html"
+                })
+
+    # 5. Check for idle warehouses (4.2.1) and idle clusters (4.2.2) as additional signals
+    for check_id, label, desc, url in [
+        ("4.2.1", "Resize or stop underused warehouses", "Warehouses with minimal query volume should be stopped or consolidated.", "https://docs.databricks.com/en/compute/sql-warehouse/index.html"),
+        ("4.2.2", "Terminate unused interactive clusters", "Interactive clusters left running with no users attached waste compute.", "https://docs.databricks.com/en/compute/configure.html#auto-termination"),
+    ]:
+        c = checks_by_id.get(check_id, {})
+        if c.get("status") in ("fail", "partial"):
+            details = c.get("details", {})
+            nc = details.get("non_conforming", [])
+            count = len(nc) if nc else 0
+            if count > 0:
+                est = count * 200  # conservative $200/month per idle resource
+                waste_sources.append({
+                    "id": f"idle_{check_id.replace('.','_')}",
+                    "label": label,
+                    "description": desc,
+                    "monthly_waste": est,
+                    "per_second": est / 30 / 24 / 3600,
+                    "category": "idle_resources",
+                    "docs_url": url
+                })
+
+    # Sort by monthly waste descending
+    waste_sources.sort(key=lambda x: x["monthly_waste"], reverse=True)
+
+    total_monthly = sum(s["monthly_waste"] for s in waste_sources)
+    total_per_second = sum(s["per_second"] for s in waste_sources)
+    total_daily = total_per_second * 86400
+    total_annual = total_monthly * 12
+
+    return {
+        "available": total_monthly > 0,
+        "total_monthly_waste": round(total_monthly, 2),
+        "total_daily_waste": round(total_daily, 2),
+        "total_annual_waste": round(total_annual, 2),
+        "per_second": round(total_per_second, 6),
+        "source_count": len(waste_sources),
+        "sources": waste_sources,
+    }
+
+
+
 # ── Background health-check runner ───────────────────────────────────
 def run_health_check(warehouse_id: str, include_table_analysis: bool, user_token: str = ""):
     from checks.base import QueryExecutor, APIClient
@@ -291,6 +458,7 @@ def run_health_check(warehouse_id: str, include_table_analysis: bool, user_token
 
         # Pillar 4: Compute Score Booster (potential score from adoption opportunities)
         score_booster = _compute_score_booster(overall, section_results)
+        burn_rate = _compute_burn_rate(section_results)
 
         final = {
             "overall": overall,
@@ -299,6 +467,7 @@ def run_health_check(warehouse_id: str, include_table_analysis: bool, user_token
             "insights": insights_data,
             "ai_insights": ai_insights,
             "score_booster": score_booster,
+            "burn_rate": burn_rate,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "diagnostics": {
                 "query_stats": executor.stats,
