@@ -41,6 +41,7 @@ select{font-family:inherit}
     .history-down { color: #9B2C2C; background: #FEF2F2; }
     .history-same { color: #6B7280; background: #F3F4F6; }
 
+/* v2.3.0 - Cost Banner Fix - 1776386259.4092128 */
 </style>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
@@ -402,55 +403,113 @@ function renderScoreBooster(){
   const r=state.results;if(!r||!r.score_booster||!r.score_booster.available)return'';
   const sb=r.score_booster;
   if(sb.total_boost<=0)return'';
-  const cur=sb.current_score;const pot=sb.potential_score;const boost=sb.total_boost;
-  const opps=sb.top_opportunities||[];
-  const curPct=Math.min(cur,100);const potPct=Math.min(pot,100);
-
+  
+  // Initialize simulator state
+  if(!window._simState)window._simState={};
+  
+  const cur=sb.current_score;
+  const allOpps=sb.all_opportunities||sb.top_opportunities||[];
+  
+  // Calculate simulated score based on toggled opportunities
+  let simBoost=0;
+  allOpps.forEach(opp=>{
+    if(window._simState[opp.check_id])simBoost+=opp.projected_boost;
+  });
+  const simScore=Math.min(Math.round(cur+simBoost),100);
+  const pot=sb.potential_score;
+  const activeCount=Object.values(window._simState).filter(v=>v).length;
+  
   let oppCards='';
-  opps.slice(0,3).forEach(opp=>{
+  allOpps.slice(0,6).forEach(opp=>{
+    const checked=window._simState[opp.check_id]?'checked':'';
     const rec=opp.recommendation||{};
-    const docLink=rec.docs_url?`<a href="${esc(rec.docs_url)}" target="_blank" style="font-size:11px;color:#2563EB;margin-top:6px;display:inline-block">Get started \u2197</a>`:'';
-    oppCards+=`<div class="card" style="padding:14px;flex:1;min-width:220px;border-top:3px solid #1B3139">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-        <span style="font-size:13px;font-weight:600">${esc(opp.name)}</span>
-        <span style="font-size:12px;font-weight:700;color:#1B3139;background:#F1F5F9;padding:2px 8px;border-radius:10px">+${opp.projected_boost} pts</span>
-      </div>
-      <div style="font-size:12px;color:#6B7280;margin-bottom:4px">${esc(opp.current_value||'')}</div>
-      <div style="font-size:11px;color:#9CA3AF;font-style:italic;margin-bottom:4px">${esc(opp.peer_benchmark||'')}</div>
-      ${docLink}
+    const docLink=rec.docs_url?`<a href="${esc(rec.docs_url)}" target="_blank" style="font-size:11px;color:#2563EB;display:inline-block">Docs \u2197</a>`:'';
+    oppCards+=`<div class="card" style="padding:12px;margin-bottom:6px;border-left:3px solid ${checked?'#2D6A4F':'#E5E7EB'};transition:all .2s">
+      <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer">
+        <input type="checkbox" class="sim-toggle" data-cid="${esc(opp.check_id)}" ${checked} style="margin-top:2px;accent-color:#2D6A4F;width:15px;height:15px;cursor:pointer;flex-shrink:0">
+        <div style="flex:1">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+            <span style="font-size:13px;font-weight:600">${esc(opp.name)}</span>
+            <span style="font-size:12px;font-weight:700;color:#2D6A4F;background:#ECFDF5;padding:2px 8px;border-radius:10px;white-space:nowrap">+${opp.projected_boost} pts</span>
+          </div>
+          <div style="font-size:11px;color:#6B7280;margin-top:3px">${esc(opp.current_value||'')}</div>
+          <div style="font-size:11px;color:#9CA3AF;font-style:italic;margin-top:2px">${esc(opp.peer_benchmark||'')}</div>
+          ${docLink}
+        </div>
+      </label>
     </div>`;
   });
-
-  const moreCount=sb.opportunity_count-3;
-  const moreLink=moreCount>0?`<div style="text-align:center;margin-top:12px"><a href="#" id="viewAllAdoption" style="font-size:13px;color:#2563EB;font-weight:500">See all ${sb.opportunity_count} optimization opportunities \u2192</a></div>`:'';
-
+  
+  const moreCount=allOpps.length-6;
+  const moreLink=moreCount>0?`<div style="text-align:center;margin-top:8px"><a href="#" id="viewAllAdoption" style="font-size:13px;color:#2563EB;font-weight:500">See all ${allOpps.length} opportunities \u2197</a></div>`:'';
+  
   return `<div class="card" style="padding:24px;margin-top:24px;background:linear-gradient(135deg,#F8FAFC 0%,#F1F5F9 100%);border:1px solid #CBD5E1">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px">
       <div>
-        <div style="font-size:16px;font-weight:700;color:#1B3139">\u{1F680} Score Booster</div>
-        <div style="font-size:13px;color:#6B7280;margin-top:2px">Adopt these capabilities to unlock <strong>+${boost} points</strong></div>
+        <div style="font-size:16px;font-weight:700;color:#1B3139">Score Simulator</div>
+        <div style="font-size:13px;color:#6B7280;margin-top:2px">${activeCount>0?'Toggle capabilities to see your projected score change':'Check the boxes below to simulate your potential score'}</div>
       </div>
       <div style="display:flex;align-items:center;gap:16px">
         <div style="text-align:center"><div style="font-size:24px;font-weight:700;color:#374151">${cur}</div><div style="font-size:11px;color:#9CA3AF">Current</div></div>
         <div style="font-size:18px;color:#9CA3AF">\u2192</div>
-        <div style="text-align:center"><div style="font-size:24px;font-weight:700;color:#1B3139">${pot}</div><div style="font-size:11px;color:#374151">Potential</div></div>
+        <div style="text-align:center"><div id="simScoreDisplay" style="font-size:24px;font-weight:700;color:${simBoost>0?'#2D6A4F':'#1B3139'};transition:all .3s">${simScore}</div><div style="font-size:11px;color:${simBoost>0?'#2D6A4F':'#374151'}">${simBoost>0?'Simulated':'Potential'}</div></div>
       </div>
     </div>
-    <div style="margin-bottom:20px;position:relative">
+    <div style="margin-bottom:16px;position:relative">
       <div style="height:8px;background:#E5E7EB;border-radius:4px;overflow:visible;position:relative">
-        <div style="height:100%;width:${curPct}%;background:#374151;border-radius:4px;position:absolute;z-index:2"></div>
-        <div style="height:100%;width:${potPct}%;background:#BBF7D0;border-radius:4px;position:absolute;z-index:1"></div>
+        <div style="height:100%;width:${Math.min(cur,100)}%;background:#374151;border-radius:4px;position:absolute;z-index:3"></div>
+        <div style="height:100%;width:${Math.min(simScore,100)}%;background:#86EFAC;border-radius:4px;position:absolute;z-index:2;transition:width .4s ease"></div>
+        <div style="height:100%;width:${Math.min(pot,100)}%;background:#BBF7D0;border-radius:4px;position:absolute;z-index:1"></div>
       </div>
       <div style="display:flex;justify-content:space-between;margin-top:4px">
         <span style="font-size:10px;color:#9CA3AF">0</span>
+        ${simBoost>0?`<span style="font-size:10px;font-weight:600;color:#2D6A4F">+${simBoost} points selected</span>`:''}
         <span style="font-size:10px;color:#9CA3AF">100</span>
       </div>
     </div>
-    <div style="display:flex;gap:12px;flex-wrap:wrap">${oppCards}</div>
+    ${oppCards}
     ${moreLink}
   </div>`;
 }
 
+function getSettingsUrl(checkId){
+  const map={
+    '4.2.1':'/sql/warehouses','4.2.2':'/compute','4.5.3':'/sql/warehouses',
+    '4.1.2':'/workflows','4.5.2':'/compute',
+    '5.1.1':'/settings/workspace/ip-access-lists','5.2.5':'/settings/workspace/developer',
+    '5.2.6':'/settings/workspace/identity-and-access',
+    '1.2.1':'/settings/workspace/predictive-optimization',
+    '6.1.1':'/data-management/unity-catalog',
+    '3.1.1':'/compute','3.1.2':'/compute',
+    '5.3.5':'/compute',
+  };
+  const path=map[checkId]||'';
+  if(!path)return'';
+  // Get workspace host from the app's API or URL params
+  const wsHost=window._workspaceHost||'';
+  return wsHost?wsHost+path:path;
+}
+function initWorkspaceHost(){
+  // Try to get workspace host from the o= param or API
+  const params=new URLSearchParams(window.location.search);
+  const orgId=params.get('o');
+  if(orgId){
+    // Standard Databricks workspace URL pattern
+    fetch('/api/workspace-host').then(r=>r.json()).then(d=>{
+      if(d.host)window._workspaceHost=d.host;
+    }).catch(()=>{});
+  }
+  // Also try direct fetch
+  fetch('/api/workspace-host').then(r=>r.json()).then(d=>{
+    if(d.host)window._workspaceHost=d.host;
+  }).catch(()=>{});
+}
+initWorkspaceHost();
+
+function isQuickWin(checkId){
+  const qw=['1.2.1','4.2.1','4.2.2','4.5.2','4.5.3','5.1.1','5.2.5','5.3.5','3.1.1','3.1.2','4.1.3'];
+  return qw.includes(checkId);
+}
 
 function renderSavingsTicker(){
   const br=state.results&&state.results.burn_rate;
@@ -515,6 +574,21 @@ function renderSavingsTicker(){
   </div>`;
 }
 
+
+function renderCostBanner(){
+  const r=state.results;if(!r)return'';
+  const br=r.burn_rate;
+  if(!br||!br.available||br.total_annual_waste<100)return'';
+  const amt=Math.round(br.total_annual_waste).toLocaleString();
+  return '<div style="padding:14px 20px;margin-bottom:20px;border-radius:10px;background:linear-gradient(135deg,#1B3139,#2D3F48);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">'
+    +'<div style="display:flex;align-items:center;gap:10px">'
+    +'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#FF6B4A" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 100 7h5a3.5 3.5 0 110 7H6"/></svg>'
+    +'<span style="font-size:14px;color:rgba(255,255,255,0.7)">Estimated annual savings opportunity:</span>'
+    +'</div>'
+    +'<span style="font-size:22px;font-weight:800;color:#FF6B4A">$'+amt+'</span>'
+    +'</div>';
+}
+
 function renderDashboard(){
   const r=state.results;if(!r)return'';
   const secs=r.sections||[];const active=secs.filter(s=>s.active);const ov=r.overall||{};
@@ -531,19 +605,83 @@ function renderDashboard(){
     cards+=`<div class="card section-card" data-sid="${sec.section_id}" style="padding:18px;cursor:${sec.active?'pointer':'default'};opacity:${sec.active?1:0.5};transition:all .2s;${adoptStyle}">
       <div style="display:flex;justify-content:space-between;align-items:flex-start"><div style="display:flex;align-items:center;gap:10px"><span style="font-size:22px">${meta.icon}</span><div><div style="font-size:14px;font-weight:600">${esc(meta.name)}</div><div style="font-size:11px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.5px">${sec.section_type}</div></div></div>${scoreHtml}</div>${bar}</div>`;
   });
+  // #7 Remediation Roadmap + #8 Quick Wins + #9 Direct Settings Links
+  const allRecs=r.top_recommendations||[];
+  const quickWins=allRecs.filter(rec=>isQuickWin(rec.check_id));
+  const thisWeek=allRecs.filter(rec=>rec.priority==='high'&&!isQuickWin(rec.check_id));
+  const thisMonth=allRecs.filter(rec=>rec.priority==='medium'&&!isQuickWin(rec.check_id));
+  const thisQuarter=allRecs.filter(rec=>rec.priority==='low'&&!isQuickWin(rec.check_id));
+  
+  function renderRecCard(rec){
+    const pc=rec.priority==='high'?'#9B2C2C':rec.priority==='medium'?'#B7791F':'#6B7280';
+    const settingsUrl=getSettingsUrl(rec.check_id);
+    const settingsLink=settingsUrl?`<a href="${settingsUrl}" target="_blank" style="font-size:11px;color:#2563EB;font-weight:500;margin-right:12px">Open Settings \u2197</a>`:'';
+    const docsLink=rec.docs_url?`<a href="${esc(rec.docs_url)}" target="_blank" style="font-size:11px;color:#6B7280">Docs \u2197</a>`:'';
+    const dollarBadge=rec.dollar_impact?`<span style="font-size:11px;font-weight:600;color:#2D6A4F;background:#ECFDF5;padding:2px 8px;border-radius:10px">${esc(rec.dollar_impact)}</span>`:'';
+    return `<div class="card" style="padding:14px;border-left:3px solid ${pc};margin-bottom:6px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+        <div style="flex:1"><div style="font-size:13px;font-weight:600">${esc(rec.check_name)}</div>
+        <div style="font-size:12px;color:#6B7280;margin-top:3px">${esc(rec.action||'')}</div></div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+          ${dollarBadge}
+          <span style="font-size:11px;color:#9CA3AF">${esc(rec.section_name)}</span>
+        </div>
+      </div>
+      <div style="margin-top:6px;display:flex;gap:4px;align-items:center">${settingsLink}${docsLink}</div>
+    </div>`;
+  }
+  
+  let quickWinHtml='';
+  if(quickWins.length>0){
+    quickWins.slice(0,4).forEach(rec=>{
+      const settingsUrl=getSettingsUrl(rec.check_id);
+      const link=settingsUrl?settingsUrl:rec.docs_url||'';
+      quickWinHtml+=`<a href="${link}" target="_blank" style="text-decoration:none;flex:1;min-width:200px">
+        <div class="card" style="padding:12px 14px;border:1px solid #D1FAE5;background:#F0FDF4;cursor:pointer;transition:all .15s">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+            <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2D6A4F"></span>
+            <span style="font-size:12px;font-weight:600;color:#1B3139">${esc(rec.check_name)}</span>
+          </div>
+          <div style="font-size:11px;color:#6B7280">${esc((rec.action||'').substring(0,80))}...</div>
+        </div>
+      </a>`;
+    });
+  }
+  
+  let roadmapHtml='';
+  function renderPhase(label,icon,items,color){
+    if(items.length===0)return'';
+    let cards='';items.slice(0,3).forEach(rec=>{cards+=renderRecCard(rec)});
+    return `<div style="margin-bottom:20px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <div style="width:24px;height:24px;border-radius:50%;background:${color};display:flex;align-items:center;justify-content:center;font-size:12px;color:white;font-weight:700">${icon}</div>
+        <span style="font-size:14px;font-weight:600;color:#1B3139">${label}</span>
+        <span style="font-size:12px;color:#9CA3AF">(${items.length} item${items.length>1?'s':''})</span>
+      </div>
+      ${cards}
+    </div>`;
+  }
+  roadmapHtml+=renderPhase('This Week','!',thisWeek,'#9B2C2C');
+  roadmapHtml+=renderPhase('This Month','\u2192',thisMonth,'#B7791F');
+  roadmapHtml+=renderPhase('This Quarter','\u2026',thisQuarter,'#6B7280');
+
   let recs='';
-  (r.top_recommendations||[]).slice(0,5).forEach(rec=>{
-    const pc=rec.priority==='high'?'#374151':rec.priority==='medium'?'#6B7280':'#9CA3AF';
-    recs+=`<div class="card" style="padding:16px;border-left:4px solid ${pc};margin-bottom:8px"><div style="display:flex;justify-content:space-between;gap:12px"><div style="flex:1"><div style="font-size:13px;font-weight:600;margin-bottom:4px">${esc(rec.action||'')}</div><div style="font-size:12px;color:#6B7280">${esc(rec.impact||'')}</div></div><span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;background:${pc}15;color:${pc};text-transform:uppercase;white-space:nowrap">${rec.priority||'medium'}</span></div>${rec.docs_url?`<a href="${esc(rec.docs_url)}" target="_blank" style="font-size:12px;color:#2563EB;margin-top:6px;display:inline-block">Documentation \u2197</a>`:''}</div>`;
-  });
+  if(quickWinHtml||roadmapHtml){
+    recs+=(quickWinHtml?`<div style="margin-bottom:24px"><div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2D6A4F" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg><h3 style="font-size:16px;font-weight:600;margin:0;color:#1B3139">Quick Wins</h3><span style="font-size:12px;color:#6B7280">One-click admin changes</span></div><div style="display:flex;gap:8px;flex-wrap:wrap">${quickWinHtml}</div></div>`:'');
+    recs+=`<h3 style="font-size:16px;font-weight:600;margin:0 0 16px;color:#1B3139">Remediation Roadmap</h3>`;
+    recs+=roadmapHtml;
+  }
+
   return `<div style="padding:32px;max-width:1200px;margin:0 auto">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;flex-wrap:wrap;gap:8px"><div><h1 style="font-size:24px;font-weight:700;margin:0">Account Health Dashboard</h1><p style="font-size:13px;color:#6B7280;margin-top:4px">${r.timestamp?new Date(r.timestamp).toLocaleString():''}</p></div><div style="display:flex;gap:8px"><button id="checklistBtn" class="btn card" style="padding:8px 16px;font-size:13px;font-weight:500">\u2611 Export Checklist</button><button id="exportBtn" class="btn card" style="padding:8px 16px;font-size:13px;font-weight:500">\u2B07 Export Report</button></div></div>
+
+    ${renderCostBanner()}
     <div class="card" style="padding:28px;display:flex;align-items:center;gap:40px;margin-bottom:28px">${renderGaugeSVG(ov.overall_score||0,140,true)}<div><h2 style="font-size:20px;font-weight:600;margin:0 0 8px">Overall Health Score</h2><div style="display:flex;gap:20px"><div><div style="font-size:22px;font-weight:700">${active.length}</div><div style="font-size:12px;color:#6B7280">Analyzed</div></div><div><div style="font-size:22px;font-weight:700;color:#1B3139">${active.filter(s=>(s.score||0)>=90).length}</div><div style="font-size:12px;color:#6B7280">Excellent</div></div><div><div style="font-size:22px;font-weight:700;color:#6B7280">${active.filter(s=>(s.score||0)>=50&&(s.score||0)<90).length}</div><div style="font-size:12px;color:#6B7280">Needs Work</div></div><div><div style="font-size:22px;font-weight:700;color:#9CA3AF">${active.filter(s=>(s.score||0)<50).length}</div><div style="font-size:12px;color:#6B7280">Critical</div></div></div></div></div>
     ${renderSavingsTicker()}
     ${renderInsightsPanel()}
     <h3 style="font-size:16px;font-weight:600;margin:0 0 12px">Sections</h3>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-bottom:32px">${cards}</div>
-    ${recs?`<h3 style="font-size:16px;font-weight:600;margin:0 0 12px">Top Recommendations</h3>${recs}`:''}
+    ${recs}
     ${renderScoreBooster()}
   </div>`;
 }
@@ -696,6 +834,12 @@ function bindEvents(){
   },100);
   // Ticker toggle handlers (delegated)
   document.addEventListener('change',function(e){
+    if(e.target.classList.contains('sim-toggle')){
+      const cid=e.target.dataset.cid;
+      if(!window._simState)window._simState={};
+      window._simState[cid]=e.target.checked;
+      update();
+    }
     if(e.target.classList.contains('ticker-toggle')){
       const sid=e.target.dataset.sid;
       if(!window._tickerState)window._tickerState={start:Date.now(),toggles:{},baseRate:0};
