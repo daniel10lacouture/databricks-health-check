@@ -6,7 +6,7 @@ from checks.base import BaseCheckRunner, CheckResult, Recommendation
 
 class DataEngineeringCheckRunner(BaseCheckRunner):
     section_id = "data_engineering"
-    section_name = "Data Engineering & Table Health"
+    section_name = "Data Engineering"
     section_type = "core"
     icon = "layers"
 
@@ -35,7 +35,7 @@ class DataEngineeringCheckRunner(BaseCheckRunner):
         try:
             rows = self.executor.execute("""
                 SELECT table_catalog, table_schema, table_name, table_type
-                FROM hive_metastore.information_schema.tables
+                FROM system.information_schema.tables WHERE table_catalog = 'hive_metastore'
                 WHERE table_schema != 'information_schema'
                 LIMIT 50""")
             hms_count = len(rows)
@@ -131,9 +131,9 @@ class DataEngineeringCheckRunner(BaseCheckRunner):
         try:
             rows = self.executor.execute("""
                 SELECT table_catalog, table_schema, table_name,
-                    COUNT(*) AS operations, MAX(period_start_time) AS last_op
+                    COUNT(*) AS operations, MAX(start_time) AS last_op
                 FROM system.storage.predictive_optimization_operations_history
-                WHERE period_start_time >= DATEADD(DAY, -30, CURRENT_DATE())
+                WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE())
                 GROUP BY 1, 2, 3
                 ORDER BY 4 DESC LIMIT 20""")
             count = len(rows)
@@ -224,7 +224,7 @@ class DataEngineeringCheckRunner(BaseCheckRunner):
         """Identify the largest tables by storage size."""
         try:
             rows = self.executor.execute("""
-                SELECT table_catalog, table_schema, table_name,
+                SELECT catalog_name, schema_name, table_name,
                     active_bytes, active_files, predictive_optimization_enabled
                 FROM system.storage.table_metrics_history
                 WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM system.storage.table_metrics_history)
@@ -301,7 +301,7 @@ class DataEngineeringCheckRunner(BaseCheckRunner):
     def check_1_4_8_allpurpose_compute_jobs(self) -> CheckResult:
         try:
             rows = self.executor.execute("""
-                SELECT j.job_id, j.name AS job_name, j.compute
+                SELECT j.job_id, j.name AS job_name
                 FROM system.lakeflow.jobs j
                 WHERE j.delete_time IS NULL""")
         except Exception:
@@ -314,7 +314,7 @@ class DataEngineeringCheckRunner(BaseCheckRunner):
             FROM system.lakeflow.job_run_timeline r
             JOIN system.lakeflow.jobs j ON r.job_id = j.job_id
             WHERE r.period_start_time >= DATEADD(DAY, -30, CURRENT_DATE())
-                AND r.cluster_type = 'EXISTING'
+                AND r.run_type = 'JOB_RUN'
                 AND j.delete_time IS NULL
             LIMIT 20""")
         nc = [{"job_name": r.get("job_name",""), "job_id": r.get("job_id",""),
@@ -625,7 +625,7 @@ class DataEngineeringCheckRunner(BaseCheckRunner):
             total_r = self.executor.execute("""
                 SELECT COUNT(DISTINCT CONCAT(catalog_name, '.', schema_name, '.', table_name)) AS total
                 FROM system.storage.table_metrics_history
-                WHERE record_date = (SELECT MAX(record_date) FROM system.storage.table_metrics_history)
+                WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM system.storage.table_metrics_history)
             """)
             total = total_r[0]["total"] or 0
         except Exception:
@@ -668,15 +668,15 @@ class DataEngineeringCheckRunner(BaseCheckRunner):
         """Analyze DLT/Lakeflow pipeline health using pipeline_update_timeline."""
         try:
             rows = self.executor.execute("""
-                SELECT p.pipeline_id, p.pipeline_name,
+                SELECT p.pipeline_id, p.name,
                        COUNT(*) AS total_updates,
-                       SUM(CASE WHEN ut.state = 'COMPLETED' THEN 1 ELSE 0 END) AS succeeded,
-                       SUM(CASE WHEN ut.state = 'FAILED' THEN 1 ELSE 0 END) AS failed,
-                       ROUND(SUM(CASE WHEN ut.state = 'FAILED' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS failure_rate
+                       SUM(CASE WHEN ut.result_state = 'COMPLETED' THEN 1 ELSE 0 END) AS succeeded,
+                       SUM(CASE WHEN ut.result_state = 'FAILED' THEN 1 ELSE 0 END) AS failed,
+                       ROUND(SUM(CASE WHEN ut.result_state = 'FAILED' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS failure_rate
                 FROM system.lakeflow.pipeline_update_timeline ut
                 JOIN system.lakeflow.pipelines p ON ut.pipeline_id = p.pipeline_id
-                WHERE ut.start_time >= DATEADD(DAY, -30, CURRENT_DATE())
-                GROUP BY p.pipeline_id, p.pipeline_name
+                WHERE ut.period_start_time >= DATEADD(DAY, -30, CURRENT_DATE())
+                GROUP BY p.pipeline_id, p.name
                 ORDER BY failure_rate DESC
             """)
         except Exception as e:
@@ -722,14 +722,14 @@ class DataEngineeringCheckRunner(BaseCheckRunner):
             rows = self.executor.execute("""
                 SELECT job_id, task_key,
                        COUNT(*) AS runs,
-                       ROUND(AVG(TIMESTAMPDIFF(SECOND, start_time, end_time)) / 60.0, 1) AS avg_duration_min,
-                       ROUND(MAX(TIMESTAMPDIFF(SECOND, start_time, end_time)) / 60.0, 1) AS max_duration_min,
-                       ROUND(PERCENTILE_APPROX(TIMESTAMPDIFF(SECOND, start_time, end_time) / 60.0, 0.95), 1) AS p95_duration_min
+                       ROUND(AVG(execution_duration_seconds) / 60.0, 1) AS avg_duration_min,
+                       ROUND(MAX(execution_duration_seconds) / 60.0, 1) AS max_duration_min,
+                       ROUND(PERCENTILE_APPROX(execution_duration_seconds / 60.0, 0.95), 1) AS p95_duration_min
                 FROM system.lakeflow.job_task_run_timeline
-                WHERE start_time >= DATEADD(DAY, -14, CURRENT_DATE())
+                WHERE period_start_time >= DATEADD(DAY, -14, CURRENT_DATE())
                   AND result_state IS NOT NULL
                 GROUP BY job_id, task_key
-                HAVING AVG(TIMESTAMPDIFF(SECOND, start_time, end_time)) > 600
+                HAVING AVG(execution_duration_seconds) > 600
                 ORDER BY avg_duration_min DESC LIMIT 30
             """)
         except Exception as e:
@@ -765,12 +765,12 @@ class DataEngineeringCheckRunner(BaseCheckRunner):
             rows = self.executor.execute("""
                 WITH recent AS (
                     SELECT catalog_name, schema_name, table_name,
-                           MIN(total_size_bytes) AS earliest_size, MAX(total_size_bytes) AS latest_size,
+                           MIN(active_bytes) AS earliest_size, MAX(active_bytes) AS latest_size,
                            MIN(snapshot_date) AS first_date, MAX(snapshot_date) AS last_date
                     FROM system.storage.table_metrics_history
                     WHERE snapshot_date >= DATEADD(DAY, -30, CURRENT_DATE())
                     GROUP BY catalog_name, schema_name, table_name
-                    HAVING MIN(total_size_bytes) > 1073741824 AND MAX(snapshot_date) > MIN(snapshot_date)
+                    HAVING MIN(active_bytes) > 1073741824 AND MAX(snapshot_date) > MIN(snapshot_date)
                 )
                 SELECT *, ROUND((latest_size - earliest_size) * 100.0 / NULLIF(earliest_size, 0), 1) AS growth_pct,
                        ROUND(latest_size / 1073741824.0, 2) AS current_gb
@@ -808,33 +808,32 @@ class DataEngineeringCheckRunner(BaseCheckRunner):
     def check_1_9_1_job_sla_compliance(self) -> CheckResult:
         """Measure job SLA compliance — % of recurring jobs completing within 2x their median duration."""
         try:
-            rows = self.executor.execute("""
-                WITH job_stats AS (
-                    SELECT job_id,
-                           run_name,
-                           COUNT(*) AS total_runs,
-                           PERCENTILE(run_duration_seconds, 0.5) AS median_duration,
-                           SUM(CASE WHEN run_duration_seconds > PERCENTILE(run_duration_seconds, 0.5) * 2 THEN 1 ELSE 0 END) AS sla_breaches,
-                           MAX(run_duration_seconds) AS max_duration,
-                           AVG(run_duration_seconds) AS avg_duration
+            rows = self.executor.execute("""WITH job_percentiles AS (
+                    SELECT job_id, 
+                           PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY run_duration_seconds) AS p50,
+                           PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY run_duration_seconds) AS p95
                     FROM system.lakeflow.job_run_timeline
                     WHERE period_start_time >= DATEADD(DAY, -30, CURRENT_DATE())
-                      AND result_state IS NOT NULL
-                      AND run_duration_seconds > 0
-                      AND run_type = 'JOB_RUN'
-                    GROUP BY job_id, run_name
+                      AND run_type = 'JOB_RUN' AND result_state IS NOT NULL
+                    GROUP BY job_id
+                ),
+                job_stats AS (
+                    SELECT t.job_id, t.run_name, COUNT(*) AS total_runs,
+                           p.p50 AS median_duration,
+                           SUM(CASE WHEN t.run_duration_seconds > p.p95 * 1.5 THEN 1 ELSE 0 END) AS outlier_runs
+                    FROM system.lakeflow.job_run_timeline t
+                    JOIN job_percentiles p ON t.job_id = p.job_id
+                    WHERE t.period_start_time >= DATEADD(DAY, -30, CURRENT_DATE())
+                      AND t.run_type = 'JOB_RUN' AND t.result_state IS NOT NULL
+                    GROUP BY t.job_id, t.run_name, p.p50, p.p95
                     HAVING COUNT(*) >= 5
                 )
-                SELECT job_id, run_name, total_runs,
-                       ROUND(median_duration / 60.0, 1) AS median_min,
-                       ROUND(avg_duration / 60.0, 1) AS avg_min,
-                       ROUND(max_duration / 60.0, 1) AS max_min,
-                       sla_breaches,
-                       ROUND((total_runs - sla_breaches) * 100.0 / total_runs, 1) AS sla_pct
+                SELECT job_id, run_name, total_runs, median_duration, outlier_runs,
+                       ROUND(outlier_runs * 100.0 / total_runs, 1) AS outlier_pct
                 FROM job_stats
-                ORDER BY sla_breaches DESC
-                LIMIT 20
-            """)
+                WHERE outlier_runs > 0
+                ORDER BY outlier_pct DESC
+                LIMIT 20""")
         except Exception as e:
             return CheckResult("1.9.1", "Job SLA compliance (30d)", "Operational Efficiency",
                 0, "not_evaluated", f"Could not query: {str(e)[:80]}", "N/A")
@@ -879,7 +878,7 @@ class DataEngineeringCheckRunner(BaseCheckRunner):
         """Check data freshness — identify tables not updated in 7/30/90 days."""
         try:
             rows = self.executor.execute("""
-                SELECT catalog_name, schema_name, table_name, table_type,
+                SELECT table_catalog AS catalog_name, table_schema AS schema_name, table_name, table_type,
                        last_altered AS last_modified,
                        DATEDIFF(DAY, last_altered, CURRENT_TIMESTAMP()) AS days_since_update
                 FROM system.information_schema.tables

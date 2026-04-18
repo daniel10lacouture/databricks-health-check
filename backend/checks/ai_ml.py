@@ -3,13 +3,13 @@ from checks.base import BaseCheckRunner, CheckResult, Recommendation
 
 
 class AIMLCheckRunner(BaseCheckRunner):
-    section_id = "ai_ml"
-    section_name = "AI & ML Workloads"
+    section_id = "genai_ml"
+    section_name = "Gen AI & ML"
     section_type = "conditional"
     icon = "brain"
 
     def get_subsections(self):
-        return ["Model Lifecycle & Registry", "Model Serving", "AI Gateway"]
+        return ["Model Lifecycle & Registry", "Model Serving", "AI Gateway", "GenAI Serving", "GenAI Adoption"]
 
     def is_active(self) -> bool:
         try:
@@ -319,3 +319,201 @@ class AIMLCheckRunner(BaseCheckRunner):
             details={"model_routing": nc,
                      "summary": f"AI Gateway processed {total_requests:,} requests across {len(rows)} models"},
             recommendation=rec)
+    # ── GenAI Serving & Adoption ─────────────────────────────────
+
+    def check_7_3_1_endpoint_inventory(self) -> CheckResult:
+        """Model serving endpoint inventory by type."""
+        try:
+            rows = self.executor.execute("""
+                SELECT entity_type, COUNT(DISTINCT endpoint_name) AS endpoints,
+                       COUNT(*) AS served_entities
+                FROM system.serving.served_entities
+                GROUP BY entity_type""")
+        except Exception as e:
+            return CheckResult("7.3.1", "Serving endpoint inventory", "GenAI Serving",
+                None, "info", f"Could not query: {str(e)[:80]}", "Track endpoints")
+        total_endpoints = sum(int(r.get("endpoints", 0) or 0) for r in rows)
+        nc = [{"type": r.get("entity_type", ""), "endpoints": r.get("endpoints", 0),
+               "entities": r.get("served_entities", 0)} for r in rows]
+        score = 100 if total_endpoints > 0 else 0
+        return CheckResult("7.3.1", "Serving endpoint inventory", "GenAI Serving",
+            score, "pass" if score == 100 else "fail",
+            f"{total_endpoints} endpoints across {len(rows)} types", "Active model serving",
+            details={"non_conforming": nc, "total": total_endpoints})
+
+    def check_7_3_2_endpoint_error_rate(self) -> CheckResult:
+        """Error rate across model serving endpoints (4xx/5xx)."""
+        try:
+            rows = self.executor.execute("""
+                SELECT se.endpoint_name,
+                       COUNT(*) AS total_requests,
+                       SUM(CASE WHEN CAST(eu.status_code AS INT) >= 400 THEN 1 ELSE 0 END) AS errors,
+                       SUM(CASE WHEN eu.status_code = '429' THEN 1 ELSE 0 END) AS rate_limited
+                FROM system.serving.endpoint_usage eu
+                JOIN system.serving.served_entities se ON eu.served_entity_id = se.served_entity_id
+                WHERE eu.request_time >= DATEADD(DAY, -7, CURRENT_DATE())
+                GROUP BY se.endpoint_name
+                HAVING COUNT(*) >= 100
+                ORDER BY errors DESC LIMIT 15""")
+        except Exception:
+            return CheckResult("7.3.2", "Endpoint error rate (7d)", "GenAI Serving",
+                None, "info", "Could not query endpoint usage", "<5% error rate")
+        if not rows:
+            return CheckResult("7.3.2", "Endpoint error rate (7d)", "GenAI Serving",
+                100, "pass", "No endpoints with significant traffic", "<5% error rate")
+        total_req = sum(int(r.get("total_requests", 0) or 0) for r in rows) or 1
+        total_err = sum(int(r.get("errors", 0) or 0) for r in rows)
+        total_rl = sum(int(r.get("rate_limited", 0) or 0) for r in rows)
+        err_pct = round(total_err / total_req * 100, 2)
+        score = 100 if err_pct < 1 else 50 if err_pct < 5 else 0
+        nc = [{"endpoint": r.get("endpoint_name", ""), "requests": r.get("total_requests", 0),
+               "errors": r.get("errors", 0), "rate_limited": r.get("rate_limited", 0)}
+              for r in rows if int(r.get("errors", 0) or 0) > 0]
+        rec = Recommendation(
+            action=f"{err_pct}% error rate ({total_err:,} errors, {total_rl:,} rate-limited). Review capacity and retry logic.",
+            impact="High error rates degrade user experience and waste tokens on retries.",
+            priority="high" if err_pct > 5 else "medium",
+            docs_url="https://docs.databricks.com/en/machine-learning/model-serving/index.html") if score < 100 else None
+        return CheckResult("7.3.2", "Endpoint error rate (7d)", "GenAI Serving",
+            score, "pass" if score == 100 else "partial" if score == 50 else "fail",
+            f"{err_pct}% error rate ({total_rl:,} rate-limited)", "<5% error rate",
+            details={"non_conforming": nc}, recommendation=rec)
+
+    def check_7_3_3_token_throughput(self) -> CheckResult:
+        """Token throughput and cost efficiency across endpoints."""
+        try:
+            rows = self.executor.execute("""
+                SELECT se.endpoint_name, se.entity_type,
+                       COUNT(*) AS requests,
+                       SUM(CAST(eu.input_token_count AS BIGINT)) AS input_tokens,
+                       SUM(CAST(eu.output_token_count AS BIGINT)) AS output_tokens,
+                       COUNT(DISTINCT eu.requester) AS unique_users
+                FROM system.serving.endpoint_usage eu
+                JOIN system.serving.served_entities se ON eu.served_entity_id = se.served_entity_id
+                WHERE eu.request_time >= DATEADD(DAY, -30, CURRENT_DATE())
+                GROUP BY se.endpoint_name, se.entity_type
+                ORDER BY input_tokens DESC LIMIT 10""")
+        except Exception:
+            return CheckResult("7.3.3", "Token throughput (30d)", "GenAI Serving",
+                None, "info", "Could not query token metrics", "Monitor token usage")
+        total_in = sum(int(r.get("input_tokens", 0) or 0) for r in rows)
+        total_out = sum(int(r.get("output_tokens", 0) or 0) for r in rows)
+        total_users = max(int(r.get("unique_users", 0) or 0) for r in rows) if rows else 0
+        nc = [{"endpoint": r.get("endpoint_name", ""), "type": r.get("entity_type", ""),
+               "requests": f"{int(r.get('requests', 0) or 0):,}",
+               "input_tokens": f"{int(r.get('input_tokens', 0) or 0):,}",
+               "output_tokens": f"{int(r.get('output_tokens', 0) or 0):,}",
+               "users": r.get("unique_users", 0)} for r in rows]
+        return CheckResult("7.3.3", "Token throughput (30d)", "GenAI Serving",
+            None, "info",
+            f"{total_in/1e9:.1f}B input tokens, {total_out/1e6:.0f}M output tokens",
+            "Monitor token usage", details={"non_conforming": nc, "total_input": total_in, "total_output": total_out})
+
+    def check_7_3_4_agentbricks_usage(self) -> CheckResult:
+        """AgentBricks adoption — Knowledge Assistants and Supervisor Agents."""
+        try:
+            rows = self.executor.execute("""
+                SELECT product_features.agent_bricks AS agent_config,
+                       COUNT(*) AS records, ROUND(SUM(usage_quantity), 1) AS total_dbu
+                FROM system.billing.usage
+                WHERE usage_date >= DATEADD(DAY, -30, CURRENT_DATE())
+                  AND product_features.agent_bricks IS NOT NULL
+                GROUP BY 1""")
+        except Exception:
+            return CheckResult("7.3.4", "AgentBricks usage (30d)", "GenAI Serving",
+                None, "info", "Could not query AgentBricks usage", "Track agent adoption")
+        total_dbu = sum(float(r.get("total_dbu", 0) or 0) for r in rows)
+        if not rows or total_dbu == 0:
+            return CheckResult("7.3.4", "AgentBricks usage (30d)", "GenAI Serving",
+                None, "info", "No AgentBricks usage detected", "Explore Databricks Agents",
+                recommendation=Recommendation(
+                    action="No AgentBricks usage detected. Explore building AI agents with Databricks Agent Framework.",
+                    impact="Agents automate complex workflows and enable conversational data access.",
+                    priority="low",
+                    docs_url="https://docs.databricks.com/en/generative-ai/agent-framework/index.html"))
+        nc = [{"config": r.get("agent_config", ""), "dbu": r.get("total_dbu", 0)} for r in rows]
+        return CheckResult("7.3.4", "AgentBricks usage (30d)", "GenAI Serving",
+            100, "pass", f"{total_dbu:,.0f} DBUs across {len(rows)} agent type(s)",
+            "Active agent adoption", details={"non_conforming": nc, "total_dbu": total_dbu})
+
+    def check_7_3_5_ai_sql_function_adoption(self) -> CheckResult:
+        """Usage of AI SQL functions (ai_query, ai_classify, ai_extract, ai_forecast, ai_parse)."""
+        try:
+            rows = self.executor.execute("""
+                SELECT 
+                    SUM(CASE WHEN statement_text LIKE '%ai_query%' THEN 1 ELSE 0 END) AS ai_query_cnt,
+                    SUM(CASE WHEN statement_text LIKE '%ai_classify%' THEN 1 ELSE 0 END) AS ai_classify_cnt,
+                    SUM(CASE WHEN statement_text LIKE '%ai_extract%' THEN 1 ELSE 0 END) AS ai_extract_cnt,
+                    SUM(CASE WHEN statement_text LIKE '%ai_forecast%' THEN 1 ELSE 0 END) AS ai_forecast_cnt,
+                    SUM(CASE WHEN statement_text LIKE '%ai_generate%' THEN 1 ELSE 0 END) AS ai_generate_cnt,
+                    SUM(CASE WHEN statement_text LIKE '%ai_similarity%' THEN 1 ELSE 0 END) AS ai_similarity_cnt,
+                    SUM(CASE WHEN statement_text LIKE '%ai_parse%' THEN 1 ELSE 0 END) AS ai_parse_cnt,
+                    COUNT(DISTINCT executed_by) AS unique_users
+                FROM system.query.history
+                WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE())
+                  AND (statement_text LIKE '%ai_query%' OR statement_text LIKE '%ai_classify%'
+                       OR statement_text LIKE '%ai_extract%' OR statement_text LIKE '%ai_forecast%'
+                       OR statement_text LIKE '%ai_generate%' OR statement_text LIKE '%ai_similarity%'
+                       OR statement_text LIKE '%ai_parse%')""")
+        except Exception:
+            return CheckResult("7.3.5", "AI SQL function adoption (30d)", "GenAI Adoption",
+                None, "info", "Could not query AI function usage", "Track AI function adoption")
+        r = rows[0] if rows else {}
+        users = int(r.get("unique_users", 0) or 0)
+        funcs = {k.replace("_cnt", ""): int(r.get(k, 0) or 0) for k in r if k.endswith("_cnt")}
+        total = sum(funcs.values())
+        nc = [{"function": k, "calls": v} for k, v in sorted(funcs.items(), key=lambda x: -x[1]) if v > 0]
+        score = 100 if total > 100 else 50 if total > 0 else 0
+        return CheckResult("7.3.5", "AI SQL function adoption (30d)", "GenAI Adoption",
+            score, "pass" if score == 100 else "partial" if score == 50 else "fail",
+            f"{total:,} AI function calls by {users} users", "Active AI SQL function usage",
+            details={"non_conforming": nc, "total": total, "users": users})
+
+    def check_7_3_6_genai_cost_breakdown(self) -> CheckResult:
+        """GenAI cost breakdown by provider (Anthropic, OpenAI, Gemini, OSS)."""
+        try:
+            rows = self.executor.execute("""
+                SELECT
+                    CASE
+                        WHEN sku_name LIKE '%ANTHROPIC%' THEN 'Anthropic'
+                        WHEN sku_name LIKE '%OPENAI%' OR sku_name LIKE '%GPT%' THEN 'OpenAI'
+                        WHEN sku_name LIKE '%GEMINI%' THEN 'Google Gemini'
+                        WHEN sku_name LIKE '%MODEL_TRAINING%' THEN 'Model Training'
+                        ELSE 'Other Serving'
+                    END AS provider,
+                    ROUND(SUM(usage_quantity), 0) AS total_dbu,
+                    COUNT(DISTINCT workspace_id) AS workspaces
+                FROM system.billing.usage
+                WHERE usage_date >= DATEADD(DAY, -30, CURRENT_DATE())
+                  AND (sku_name LIKE '%SERVING%' OR sku_name LIKE '%MODEL%' OR sku_name LIKE '%ANTHROPIC%'
+                       OR sku_name LIKE '%OPENAI%' OR sku_name LIKE '%GEMINI%' OR sku_name LIKE '%GPT%')
+                GROUP BY 1 ORDER BY total_dbu DESC""")
+        except Exception:
+            return CheckResult("7.3.6", "GenAI cost breakdown (30d)", "GenAI Adoption",
+                None, "info", "Could not query GenAI billing", "Monitor GenAI costs")
+        total_dbu = sum(float(r.get("total_dbu", 0) or 0) for r in rows)
+        nc = [{"provider": r.get("provider", ""), "dbu": r.get("total_dbu", 0),
+               "workspaces": r.get("workspaces", 0)} for r in rows]
+        return CheckResult("7.3.6", "GenAI cost breakdown (30d)", "GenAI Adoption",
+            None, "info", f"{total_dbu:,.0f} DBUs on GenAI serving/training",
+            "Monitor GenAI costs", details={"non_conforming": nc, "total_dbu": total_dbu})
+
+    def check_7_3_7_fm_vs_custom_ratio(self) -> CheckResult:
+        """Foundation Model API vs custom-deployed model ratio."""
+        try:
+            rows = self.executor.execute("""
+                SELECT entity_type, COUNT(DISTINCT endpoint_name) AS endpoints
+                FROM system.serving.served_entities
+                GROUP BY entity_type""")
+        except Exception:
+            return CheckResult("7.3.7", "Foundation vs Custom model ratio", "GenAI Adoption",
+                None, "info", "Could not query model types", "Track model deployment strategy")
+        fm = sum(int(r.get("endpoints", 0) or 0) for r in rows if r.get("entity_type") == "FOUNDATION_MODEL")
+        custom = sum(int(r.get("endpoints", 0) or 0) for r in rows if r.get("entity_type") == "CUSTOM_MODEL")
+        ext = sum(int(r.get("endpoints", 0) or 0) for r in rows if r.get("entity_type") == "EXTERNAL_MODEL")
+        total = fm + custom + ext or 1
+        nc = [{"type": r.get("entity_type", ""), "endpoints": r.get("endpoints", 0)} for r in rows]
+        return CheckResult("7.3.7", "Foundation vs Custom model ratio", "GenAI Adoption",
+            None, "info", f"{fm} Foundation, {custom} Custom, {ext} External endpoints",
+            "Balanced model deployment", details={"non_conforming": nc})
+

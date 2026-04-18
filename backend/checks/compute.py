@@ -8,8 +8,8 @@ INTERACTIVE_FILTER = "cluster_source IN ('UI', 'API')"
 
 
 class ComputeCheckRunner(BaseCheckRunner):
-    section_id = "compute"
-    section_name = "Compute Management"
+    section_id = "compute_cost"
+    section_name = "Compute & Cost"
     section_type = "core"
     icon = "cpu"
 
@@ -391,8 +391,8 @@ class ComputeCheckRunner(BaseCheckRunner):
         try:
             rows = self.executor.execute("""
                 SELECT cluster_id,
-                       ROUND(AVG(memory_used_percent), 1) AS avg_mem_pct,
-                       ROUND(MAX(memory_used_percent), 1) AS max_mem_pct,
+                       ROUND(AVG(mem_used_percent), 1) AS avg_mem_pct,
+                       ROUND(MAX(mem_used_percent), 1) AS max_mem_pct,
                        COUNT(DISTINCT date_format(start_time, 'yyyy-MM-dd')) AS days_observed
                 FROM system.compute.node_timeline
                 WHERE start_time >= DATEADD(DAY, -14, CURRENT_DATE())

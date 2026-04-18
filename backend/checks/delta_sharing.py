@@ -3,8 +3,8 @@ from checks.base import BaseCheckRunner, CheckResult, Recommendation
 
 
 class DeltaSharingCheckRunner(BaseCheckRunner):
-    section_id = "delta_sharing"
-    section_name = "Delta Sharing"
+    section_id = "data_engineering"
+    section_name = "Data Engineering"
     section_type = "conditional"
     icon = "share-2"
 
@@ -34,7 +34,7 @@ class DeltaSharingCheckRunner(BaseCheckRunner):
             """)
             count = len(rows) if rows else 0
             nc = [{"share_name": r["share_name"], "owner": r["share_owner"],
-                   "comment": r.get("comment", "")[:60] or "No description",
+                   "comment": (r.get("comment") or "")[:60] or "No description",
                    "created": str(r["created_date"])} for r in rows[:20]] if rows else []
 
             return CheckResult("10.1.1", "Delta Shares inventory",
@@ -102,7 +102,7 @@ class DeltaSharingCheckRunner(BaseCheckRunner):
             """)
             count = len(rows) if rows else 0
             nc = [{"provider": r["provider_name"], "auth_type": r["authentication_type"],
-                   "cloud": r.get("cloud", ""), "comment": r.get("comment", "")[:50]} 
+                   "cloud": r.get("cloud", ""), "comment": (r.get("comment") or "")[:50]} 
                   for r in rows[:20]] if rows else []
 
             return CheckResult("10.1.3", "Data providers (consumed shares)",

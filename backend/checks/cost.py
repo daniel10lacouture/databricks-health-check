@@ -7,8 +7,8 @@ from checks.base import BaseCheckRunner, CheckResult, Recommendation, Status
 
 
 class CostCheckRunner(BaseCheckRunner):
-    section_id = "cost_optimization"
-    section_name = "Cost Optimization"
+    section_id = "compute_cost"
+    section_name = "Compute & Cost"
     section_type = "core"
     icon = "dollar-sign"
 

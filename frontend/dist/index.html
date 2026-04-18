@@ -42,6 +42,20 @@ select{font-family:inherit}
     .history-same { color: #6B7280; background: #F3F4F6; }
 
 /* v2.3.0 - Cost Banner Fix - 1776386259.4092128 */
+
+    /* Chat panel */
+    .chat-fab { position:fixed;bottom:24px;right:24px;width:52px;height:52px;border-radius:50%;background:#FF3621;color:white;border:none;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,0.2);display:flex;align-items:center;justify-content:center;z-index:1000;transition:transform .2s; }
+    .chat-fab:hover { transform:scale(1.08); }
+    .chat-panel { position:fixed;bottom:88px;right:24px;width:380px;max-height:500px;background:white;border-radius:16px;box-shadow:0 12px 40px rgba(0,0,0,0.15);display:flex;flex-direction:column;z-index:1000;overflow:hidden;animation:countUp .3s ease-out; }
+    .chat-msgs { flex:1;overflow-y:auto;padding:16px;min-height:200px;max-height:360px; }
+    .chat-msg { margin-bottom:12px;font-size:13px;line-height:1.5; }
+    .chat-msg.user { text-align:right; }
+    .chat-msg.user .chat-bubble { background:#F1F5F9;color:#1B3139;display:inline-block;padding:8px 14px;border-radius:12px 12px 2px 12px;max-width:85%;text-align:left; }
+    .chat-msg.ai .chat-bubble { background:#1B3139;color:white;display:inline-block;padding:8px 14px;border-radius:12px 12px 12px 2px;max-width:85%;text-align:left; }
+    .chat-input-row { display:flex;gap:8px;padding:12px;border-top:1px solid #E5E7EB; }
+    .chat-input-row input { flex:1;padding:10px 12px;border:1px solid #E5E7EB;border-radius:8px;font-size:13px;outline:none; }
+    .chat-input-row button { padding:10px 16px;background:#FF3621;color:white;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer; }
+
 </style>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
@@ -50,23 +64,24 @@ select{font-family:inherit}
 <div id="root"></div>
 <script>
 "use strict";
-let state = { view:'setup', results:null, section:null, runState:{idx:0,total:12,name:'',completed:{}}, error:null };
+let state = { view:'setup', results:null, section:null, runState:{idx:0,total:9,name:'',completed:{}}, error:null, warehouseId:null, token:'' };
+window.state=state;
 
 const SECTIONS=[
-{id:'data_engineering',name:'Data Engineering & Table Health',icon:'\u{1F4CA}',type:'core'},
-{id:'sql_analytics',name:'Data Warehousing / SQL Analytics',icon:'\u{1F4C8}',type:'core'},
-{id:'compute',name:'Compute Management',icon:'\u2699\uFE0F',type:'core'},
-{id:'cost_optimization',name:'Cost Optimization',icon:'\u{1F4B0}',type:'core'},
-{id:'security',name:'Security & Compliance',icon:'\u{1F6E1}\uFE0F',type:'core'},
-{id:'governance',name:'Governance (Unity Catalog)',icon:'\u{1F512}',type:'core'},
-{id:'ai_ml',name:'AI & ML Workloads',icon:'\u{1F9E0}',type:'conditional'},
-{id:'bi_tooling',name:'BI & Tooling Adoption',icon:'\u{1F4CA}',type:'advisory'},
-{id:'apps',name:'Databricks Apps',icon:'\u{1F4F1}',type:'conditional'},
-{id:'lakebase',name:'OLTP / Lakebase',icon:'\u{1F5A5}\uFE0F',type:'conditional'},
-{id:'delta_sharing',name:'Delta Sharing',icon:'\u{1F517}',type:'conditional'},
-{id:'workspace_admin',name:'Workspace Administration',icon:'\u{1F527}',type:'core'},
-{id:'adoption',name:'Platform Adoption',icon:'\u{1F680}',type:'advisory'}
+{id:'data_engineering',name:'Data Engineering',icon:'📊',type:'core'},
+{id:'sql_analytics',name:'SQL Analytics',icon:'📈',type:'core'},
+{id:'compute_cost',name:'Compute & Cost',icon:'⚙️',type:'core'},
+{id:'security',name:'Security & Compliance',icon:'🛡️',type:'core'},
+{id:'governance',name:'Governance',icon:'🔒',type:'core'},
+{id:'genai_ml',name:'Gen AI & ML',icon:'🧠',type:'core'},
+{id:'aibi_dashboards',name:'AI/BI Dashboards',icon:'📊',type:'core'},
+{id:'data_storage',name:'Data Storage',icon:'💾',type:'core'},
+{id:'apps',name:'Databricks Apps',icon:'📱',type:'core'},
+{id:'adoption',name:'Platform Adoption',icon:'🚀',type:'advisory'}
 ];
+const SIDEBAR_ICONS={'data_engineering':`<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 16 4-8 4 4 4-12"/></svg>`,'sql_analytics':`<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="14" height="14" rx="2"/><path d="M9 9h6v6H9z"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>`,'compute_cost':`<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M15 2v2M15 20v2M2 15h2M20 15h2M9 2v2M9 20v2M2 9h2M20 9h2"/></svg>`,'security':`<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>`,'governance':`<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="14" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`,'genai_ml':`<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 2 1 3 2 4l-5 7h14l-5-7c1-1 2-2 2-4a4 4 0 0 0-4-4z"/><path d="M8 22h8"/><path d="M10 22v-2M14 22v-2"/></svg>`,'data_storage':`<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>`,'aibi_dashboards':`<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>`,'apps':`<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><path d="M12 18h.01"/></svg>`,'adoption':`<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>`,'delta_sharing':`<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>`,'workspace_admin':`<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>`};
+const SVG_ICONS={'data_engineering':`<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 16 4-8 4 4 4-12"/></svg>`,'sql_analytics':`<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6v6H9z"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>`,'compute_cost':`<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M15 2v2M15 20v2M2 15h2M20 15h2M9 2v2M9 20v2M2 9h2M20 9h2"/></svg>`,'security':`<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>`,'governance':`<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`,'genai_ml':`<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 0-4 4c0 2 1 3 2 4l-5 7h14l-5-7c1-1 2-2 2-4a4 4 0 0 0-4-4z"/><path d="M8 22h8"/><path d="M10 22v-2M14 22v-2"/></svg>`,'data_storage':`<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>`,'aibi_dashboards':`<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>`,'apps':`<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><path d="M12 18h.01"/></svg>`,'adoption':`<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>`,'delta_sharing':`<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>`,'workspace_admin':`<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>`};
+
 
 function scoreColor(s){return s>=90?'#1B3139':s>=70?'#374151':s>=50?'#6B7280':'#9CA3AF'}
 function scoreLabel(s){return s>=90?'Excellent':s>=70?'Good':s>=50?'Needs Attention':'Critical'}
@@ -89,6 +104,8 @@ function render(){
         saveToHistory();
       }
     }
+    else if(newView==='wrapped') root.innerHTML=renderWrapped();
+    else if(newView==='quickfixes') root.innerHTML=renderApp(renderQuickFixes());
     else if(newView==='section') root.innerHTML=renderApp(renderSection());
     root.dataset.view=newView;
     bindEvents();
@@ -198,11 +215,14 @@ function renderRunning(){
     data_engineering:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>',
     sql_analytics:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"><path d="M3 20h18M5 20V10M9 20V4M13 20v-8M17 20V8M21 20V2"/></svg>',
     compute:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.2 4.2l2.8 2.8M17 17l2.8 2.8M1 12h4M19 12h4M4.2 19.8l2.8-2.8M17 7l2.8-2.8"/></svg>',
+    compute_cost:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.2 4.2l2.8 2.8M17 17l2.8 2.8M1 12h4M19 12h4M4.2 19.8l2.8-2.8M17 7l2.8-2.8"/></svg>',
     cost_optimization:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 100 7h5a3.5 3.5 0 110 7H6"/></svg>',
     security:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
     governance:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/><circle cx="12" cy="16" r="1"/></svg>',
-    ai_ml:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"><path d="M12 2a4 4 0 014 4c0 1.1-.4 2-1 2.8L12 12l-3-3.2A4 4 0 0112 2zM4 14l4-2 4 4 4-4 4 2v5a1 1 0 01-1 1H5a1 1 0 01-1-1v-5z"/></svg>',
+    genai_ml:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"><path d="M12 2a4 4 0 014 4c0 1.1-.4 2-1 2.8L12 12l-3-3.2A4 4 0 0112 2zM4 14l4-2 4 4 4-4 4 2v5a1 1 0 01-1 1H5a1 1 0 01-1-1v-5z"/></svg>',
+    data_storage:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>',
     bi_tooling:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>',
+    aibi_dashboards:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>',
     apps:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"><rect x="2" y="2" width="20" height="20" rx="4"/><path d="M8 2v20M2 8h20"/></svg>',
     lakebase:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"/><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"/></svg>',
     delta_sharing:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"><circle cx="6" cy="12" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><path d="M8.6 13.5l6.8 3M8.6 10.5l6.8-3"/></svg>',
@@ -254,9 +274,8 @@ function renderApp(content){
     const isSel=state.section===s.id;
     const badge=sec?.active&&sec?.score!=null?`<span style="font-size:12px;font-weight:600;color:rgba(255,255,255,0.85)">${Math.round(sec.score)}</span>`:`<span style="font-size:10px;opacity:0.3">—</span>`;
     sideItems+=`<div class="sidebar-item" data-section="${s.id}" style="padding:8px 14px;cursor:${sec?.active?'pointer':'default'};display:flex;align-items:center;gap:10px;background:${isSel?'rgba(255,255,255,0.1)':'transparent'};border-left:3px solid ${isSel?'#FF3621':'transparent'};transition:all .15s">
-      <span style="display:flex;align-items:center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2L2 7.5V16.5L12 22L22 16.5V7.5L12 2Z" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"/><path d="M12 7L7 9.75V15.25L12 18L17 15.25V9.75L12 7Z" fill="rgba(255,255,255,0.5)"/></svg></span>
+      <span style="display:flex;align-items:center">${SIDEBAR_ICONS[s.id]||'<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="rgba(255,255,255,0.6)" stroke-width="1.5"/></svg>'}</span>
       <div style="flex:1;font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(s.name)}</div>
-      ${badge}
     </div>`;
   });
   return `<div style="display:flex;height:100vh">
@@ -265,10 +284,17 @@ function renderApp(content){
         <div style="display:flex;align-items:center;gap:8px"><div style="width:28px;height:28px;border-radius:6px;background:#FF3621;display:flex;align-items:center;justify-content:center"><svg width="14" height="14" viewBox="33 0 28.2 30.5" xmlns="http://www.w3.org/2000/svg"><path d="M59.7279 12.5153L47.2039 19.6185L33.8814 12.0502L33.251 12.3884V17.885L47.2039 25.8339L59.7279 18.7306V21.648L47.2039 28.7513L33.8814 21.1829L33.251 21.5212V22.4514L47.2039 30.4002L61.1989 22.4514V16.9548L60.5685 16.6165L47.2039 24.1849L34.7219 17.0816V14.2065L47.2039 21.2675L61.1989 13.3186V7.9066L60.4844 7.52607L47.2039 15.0521L35.3943 8.32941L47.2039 1.64897L56.9541 7.14554L57.8367 6.68044V6.00394L47.2039 0L33.251 7.9066V8.75223L47.2039 16.7011L59.7279 9.59785V12.5153Z" fill="white"/></svg></div><div><div style="font-size:13px;font-weight:600">Health Check</div><div style="font-size:10px;opacity:0.5">Account Diagnostics</div></div></div>
         ${ov?.overall_score!=null?`<div style="margin-top:12px;display:flex;align-items:center;gap:10px"><div style="width:42px;height:42px;border-radius:50%;border:2px solid rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center"><span style="font-size:16px;font-weight:700;color:white">${Math.round(ov.overall_score)}</span></div><div><div style="font-size:11px;color:white;opacity:0.8">Overall</div><div style="font-size:14px;font-weight:600;color:rgba(255,255,255,0.5)">${scoreLabel(ov.overall_score)}</div></div></div>`:''}
       </div>
-      <div style="flex:1;overflow-y:auto;padding:6px 0">${sideItems}</div>
+      <div style="flex:1;overflow-y:auto;padding:6px 0">${sideItems}
+        <div class="sidebar-action" id="navQuickFixes" onclick="state.view='quickfixes';state.section=null;render()" style="padding:8px 14px;cursor:pointer;display:flex;align-items:center;gap:10px;margin-top:4px;border-top:1px solid rgba(255,255,255,0.08);background:${state.view==='quickfixes'?'rgba(255,255,255,0.1)':'transparent'}"><span style="display:flex;align-items:center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></span><div style="flex:1;font-size:12px;font-weight:500">Quick Fixes</div></div>
+      </div>
+      <div id="navWrapped" style="padding:8px 14px;cursor:pointer;display:flex;align-items:center;gap:10px;margin:4px 0;border-top:1px solid rgba(255,255,255,0.08)">
+          <span style="display:flex;align-items:center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"><path d="M12 2a10 10 0 110 20 10 10 0 010-20z"/><path d="M10 8l6 4-6 4V8z" fill="rgba(255,255,255,0.5)"/></svg></span>
+          <div style="flex:1;font-size:12px;font-weight:500">Account Wrapped</div>
+          <span style="font-size:9px;font-weight:600;background:#FF3621;color:white;padding:1px 6px;border-radius:8px">NEW</span>
+        </div>
       <div style="padding:12px;border-top:1px solid rgba(255,255,255,0.1);font-size:10px;opacity:0.3">${r?.timestamp?'Last run: '+new Date(r.timestamp).toLocaleString():'Databricks Health Check'}</div>
     </nav>
-    <div style="flex:1;overflow:auto">${content}</div>
+    <div class="main-content" style="flex:1;overflow:auto">${content}</div>
   </div>`;
 }
 
@@ -407,7 +433,7 @@ function renderScoreBooster(){
   // Initialize simulator state
   if(!window._simState)window._simState={};
   
-  const cur=sb.current_score;
+  const cur=Math.round(sb.current_score);
   const allOpps=sb.all_opportunities||sb.top_opportunities||[];
   
   // Calculate simulated score based on toggled opportunities
@@ -467,7 +493,7 @@ function renderScoreBooster(){
         <span style="font-size:10px;color:#9CA3AF">100</span>
       </div>
     </div>
-    ${oppCards}
+    <div style="max-height:360px;overflow-y:auto">${oppCards}</div>
     ${moreLink}
   </div>`;
 }
@@ -485,8 +511,7 @@ function getSettingsUrl(checkId){
   };
   const path=map[checkId]||'';
   if(!path)return'';
-  // Get workspace host from the app's API or URL params
-  const wsHost=window._workspaceHost||'';
+  const wsHost=window._workspaceHost||(state.results&&state.results.diagnostics&&state.results.diagnostics.workspace_host)||'';
   return wsHost?wsHost+path:path;
 }
 function initWorkspaceHost(){
@@ -589,6 +614,117 @@ function renderCostBanner(){
     +'</div>';
 }
 
+
+
+function renderWrapped(){
+  const r=state.results;
+  if(!r||!r.wrapped){return'<div style="padding:32px;text-align:center;color:#6B7280">Run a health check first to generate your Account Intelligence report.</div>';}
+  
+  const data=r.wrapped;
+  const slides=data.slides||[];
+  if(!slides.length)return'<div style="padding:32px;color:#6B7280">No data available.</div>';
+  
+  if(window._wrappedSlide==null)window._wrappedSlide=0;
+  const idx=window._wrappedSlide;
+  const slide=slides[idx];
+  const isLast=idx===slides.length-1;
+  const isFirst=idx===0;
+  
+  const iconMap={
+    query:'<path d="M3 20h18M5 20V10M9 20V4M13 20v-8M17 20V8M21 20V2"/>',
+    users:'<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4-4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>',
+    clock:'<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+    database:'<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"/><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"/>',
+    jobs:'<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v2"/>',
+    compute:'<circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.2 4.2l2.8 2.8M17 17l2.8 2.8M1 12h4M19 12h4"/>',
+    workspaces:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
+    ai:'<path d="M12 2a4 4 0 014 4c0 1.1-.4 2-1 2.8L12 12l-3-3.2A4 4 0 0112 2zM4 14l4-2 4 4 4-4 4 2v5a1 1 0 01-1 1H5a1 1 0 01-1-1v-5z"/>',
+  };
+  const svgPath=iconMap[slide.icon||'query']||iconMap.query;
+  
+  const ov=r.overall;
+  const scoreBadge=isLast&&ov?`
+    <div style="margin-top:32px;padding:24px 40px;border-radius:16px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.12);display:inline-block;text-align:center">
+      <div style="font-size:48px;font-weight:800;color:#FF6B4A">${Math.round(ov.overall_score)}</div>
+      <div style="font-size:14px;color:rgba(255,255,255,0.5);margin-top:4px">Account Health Score</div>
+      <div style="font-size:13px;color:rgba(255,255,255,0.4);margin-top:2px">${ov.maturity_label||''} Maturity</div>
+    </div>`:'';
+  
+
+    const linkedInBtn=isLast&&ov?`
+      <div style="margin-top:24px">
+        <button id="shareLinkedIn" class="btn" style="padding:10px 28px;background:#0A66C2;color:white;border-radius:8px;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:8px;border:none;font-weight:600">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+          Share on LinkedIn
+        </button>
+      </div>`:'';
+  return `<div style="min-height:100vh;background:#1B3139;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px;position:relative;overflow:hidden">
+    <div style="position:absolute;top:20px;left:20px"><button id="wrappedBack" class="btn" style="background:none;color:rgba(255,255,255,0.5);font-size:13px;padding:6px 12px">\u2190 Dashboard</button></div>
+    <div style="position:absolute;top:20px;right:20px;font-size:12px;color:rgba(255,255,255,0.3)">${idx+1} / ${slides.length}</div>
+    
+    <div style="text-align:center;max-width:600px;animation:countUp 0.5s ease-out">
+      <div style="margin-bottom:24px"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#FF6B4A" stroke-width="1.5">${svgPath}</svg></div>
+      <div style="font-size:16px;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:2px;margin-bottom:12px">${esc(slide.title)}</div>
+      <div style="font-size:52px;font-weight:800;color:white;line-height:1.1;margin-bottom:12px">${esc(slide.big)}</div>
+      <div style="font-size:16px;color:rgba(255,255,255,0.5);line-height:1.5">${esc(slide.subtitle)}</div>
+      ${scoreBadge}
+      ${linkedInBtn}
+    </div>
+    
+    <div style="position:absolute;bottom:40px;display:flex;align-items:center;gap:16px">
+      ${!isFirst?'<button id="wrappedPrev" class="btn" style="padding:10px 24px;background:rgba(255,255,255,0.1);color:white;border-radius:8px;font-size:13px;cursor:pointer">\u2190 Previous</button>':'<div style="width:100px"></div>'}
+      <div style="display:flex;gap:6px">${slides.map((_,i)=>'<div style="width:'+(i===idx?'20':'8')+'px;height:8px;border-radius:4px;background:'+(i===idx?'#FF6B4A':'rgba(255,255,255,0.2)')+';transition:all .3s"></div>').join('')}</div>
+      ${!isLast?'<button id="wrappedNext" class="btn" style="padding:10px 24px;background:#FF3621;color:white;border-radius:8px;font-size:13px;cursor:pointer">Next \u2192</button>':'<button id="wrappedClose" class="btn" style="padding:10px 24px;background:#FF3621;color:white;border-radius:8px;font-size:13px;cursor:pointer">View Dashboard</button>'}
+    </div>
+  </div>`;
+}
+
+function renderQuickFixes(){
+  const r=state.results;if(!r)return'';
+  const allRecs=r.top_recommendations||[];
+  const quickWins=allRecs.filter(rec=>isQuickWin(rec.check_id));
+  
+  if(!quickWins.length)return'<div style="padding:32px;text-align:center;color:#6B7280">No quick fixes available. Run a health check first.</div>';
+  
+  let cards='';
+  quickWins.forEach(rec=>{
+    const settingsUrl=getSettingsUrl(rec.check_id);
+    const docsUrl=rec.docs_url||'';
+    const dotColor=rec.priority==='high'?'#9B2C2C':rec.priority==='medium'?'#B7791F':'#6B7280';
+    
+    cards+=`<div class="card" style="padding:20px;margin-bottom:10px;border-left:3px solid #2D6A4F">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+        <div style="flex:1">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+            <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${dotColor}"></span>
+            <span style="font-size:14px;font-weight:600">${esc(rec.check_name)}</span>
+          </div>
+          <div style="font-size:13px;color:#6B7280;margin-bottom:8px">${esc(rec.action||'')}</div>
+          <div style="font-size:12px;color:#9CA3AF">${esc(rec.section_name)} \u00B7 ${esc(rec.impact||'')}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">
+          ${settingsUrl?`<a href="${settingsUrl}" target="_blank" class="btn" style="padding:8px 16px;font-size:12px;font-weight:600;background:#2D6A4F;color:white;border-radius:6px;text-decoration:none;text-align:center;white-space:nowrap">Open Settings \u2197</a>`:''}
+          ${docsUrl?`<a href="${docsUrl}" target="_blank" style="padding:6px 16px;font-size:12px;color:#2563EB;text-align:center;text-decoration:none;white-space:nowrap">Documentation \u2197</a>`:''}
+        </div>
+      </div>
+    </div>`;
+  });
+  
+  return `<div style="padding:32px;max-width:960px;margin:0 auto">
+    <button id="backBtn" class="btn" style="background:none;font-size:13px;color:#6B7280;padding:6px 0;margin-bottom:20px">\u2190 Back to Dashboard</button>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
+      <div style="width:40px;height:40px;border-radius:10px;background:#ECFDF5;display:flex;align-items:center;justify-content:center">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2D6A4F" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+      </div>
+      <div>
+        <h1 style="font-size:22px;font-weight:700;margin:0">Quick Fixes</h1>
+        <p style="font-size:13px;color:#6B7280;margin:2px 0 0">${quickWins.length} admin-level changes that can improve your score immediately</p>
+      </div>
+    </div>
+    ${cards}
+  </div>`;
+}
+
 function renderDashboard(){
   const r=state.results;if(!r)return'';
   const secs=r.sections||[];const active=secs.filter(s=>s.active);const ov=r.overall||{};
@@ -599,11 +735,11 @@ function renderDashboard(){
     const isAdoption=sec.section_id==='adoption';
     const adoptionBoost=isAdoption&&state.results&&state.results.score_booster?state.results.score_booster.total_boost:0;
     const scoreHtml=isAdoption&&adoptionBoost>0?`<span class="fade-in" style="font-size:20px;font-weight:700;color:#1B3139;font-variant-numeric:tabular-nums">+${adoptionBoost} pts</span>`:sec.active&&sec.score!=null?`<span class="fade-in" style="font-size:26px;font-weight:700;color:${scoreColor(sec.score)};font-variant-numeric:tabular-nums">${Math.round(sec.score)}</span>`:`<span style="font-size:12px;color:#9CA3AF">N/A</span>`;
-    const bar=sec.active?`<div style="margin-top:14px;height:4px;background:#F5F7FA;border-radius:2px;overflow:hidden"><div style="height:100%;width:${sec.score||0}%;background:${scoreColor(sec.score||0)};border-radius:2px;transition:width .6s ease"></div></div><div style="margin-top:8px;font-size:12px;color:${issues>0?'#6B7280':'#374151'}">${issues>0?'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#B7791F;margin-right:4px"></span>'+issues+' check'+(issues>1?'s':'')+' need attention':'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2D6A4F;margin-right:4px"></span>All checks passing'}</div>`
+    const bar=sec.active?`<div style="margin-top:14px;height:4px;background:#F5F7FA;border-radius:2px;overflow:hidden"><div style="height:100%;width:${sec.score||0}%;background:${scoreColor(sec.score||0)};border-radius:2px;transition:width .6s ease"></div></div><div style="margin-top:8px;font-size:12px;color:${issues>0?'#FF3621':'#374151'}">${issues>0?'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#FF3621;margin-right:4px"></span>'+issues+' check'+(issues>1?'s':'')+' need attention':'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2D6A4F;margin-right:4px"></span>All checks passing'}</div>`
       :`<div style="margin-top:10px;font-size:12px;color:#9CA3AF">Not Evaluated \u2014 No Significant Usage</div>`;
     const adoptStyle=isAdoption?'grid-column:1/-1;background:linear-gradient(135deg,#F8FAFC,#F1F5F9);border:1px solid #CBD5E1':'';
     cards+=`<div class="card section-card" data-sid="${sec.section_id}" style="padding:18px;cursor:${sec.active?'pointer':'default'};opacity:${sec.active?1:0.5};transition:all .2s;${adoptStyle}">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start"><div style="display:flex;align-items:center;gap:10px"><span style="font-size:22px">${meta.icon}</span><div><div style="font-size:14px;font-weight:600">${esc(meta.name)}</div><div style="font-size:11px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.5px">${sec.section_type}</div></div></div>${scoreHtml}</div>${bar}</div>`;
+      <div style="display:flex;justify-content:space-between;align-items:flex-start"><div style="display:flex;align-items:center;gap:10px"><span style="display:flex;align-items:center;color:#1B3139">${SVG_ICONS[sec.section_id]||meta.icon}</span><div><div style="font-size:14px;font-weight:600">${esc(meta.name)}</div><div style="font-size:11px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.5px">${sec.section_type}</div></div></div>${scoreHtml}</div>${bar}</div>`;
   });
   // #7 Remediation Roadmap + #8 Quick Wins + #9 Direct Settings Links
   const allRecs=r.top_recommendations||[];
@@ -636,7 +772,7 @@ function renderDashboard(){
     quickWins.slice(0,4).forEach(rec=>{
       const settingsUrl=getSettingsUrl(rec.check_id);
       const link=settingsUrl?settingsUrl:rec.docs_url||'';
-      quickWinHtml+=`<a href="${link}" target="_blank" style="text-decoration:none;flex:1;min-width:200px">
+      quickWinHtml+=`<a href="${link}" target="_blank" style="text-decoration:none">
         <div class="card" style="padding:12px 14px;border:1px solid #D1FAE5;background:#F0FDF4;cursor:pointer;transition:all .15s">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
             <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2D6A4F"></span>
@@ -665,24 +801,24 @@ function renderDashboard(){
   roadmapHtml+=renderPhase('This Month','\u2192',thisMonth,'#B7791F');
   roadmapHtml+=renderPhase('This Quarter','\u2026',thisQuarter,'#6B7280');
 
-  let recs='';
+  let quickWinSection='';
+  let roadmapSection='';
   if(quickWinHtml||roadmapHtml){
-    recs+=(quickWinHtml?`<div style="margin-bottom:24px"><div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2D6A4F" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg><h3 style="font-size:16px;font-weight:600;margin:0;color:#1B3139">Quick Wins</h3><span style="font-size:12px;color:#6B7280">One-click admin changes</span></div><div style="display:flex;gap:8px;flex-wrap:wrap">${quickWinHtml}</div></div>`:'');
-    recs+=`<h3 style="font-size:16px;font-weight:600;margin:0 0 16px;color:#1B3139">Remediation Roadmap</h3>`;
-    recs+=roadmapHtml;
+    quickWinSection=(quickWinHtml?`<div style="margin-bottom:24px"><div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2D6A4F"" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg><h3 style="font-size:16px;font-weight:600;margin:0;color:#1B3139">Quick Wins</h3><span style="font-size:12px;color:#6B7280">One-click admin changes</span></div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px">${quickWinHtml}</div></div>`:'');
+    roadmapSection=`<h3 style="font-size:16px;font-weight:600;margin:0 0 16px;color:#1B3139">Remediation Roadmap</h3>`+roadmapHtml;
   }
 
   return `<div style="padding:32px;max-width:1200px;margin:0 auto">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;flex-wrap:wrap;gap:8px"><div><h1 style="font-size:24px;font-weight:700;margin:0">Account Health Dashboard</h1><p style="font-size:13px;color:#6B7280;margin-top:4px">${r.timestamp?new Date(r.timestamp).toLocaleString():''}</p></div><div style="display:flex;gap:8px"><button id="checklistBtn" class="btn card" style="padding:8px 16px;font-size:13px;font-weight:500">\u2611 Export Checklist</button><button id="exportBtn" class="btn card" style="padding:8px 16px;font-size:13px;font-weight:500">\u2B07 Export Report</button></div></div>
 
-    ${renderCostBanner()}
     <div class="card" style="padding:28px;display:flex;align-items:center;gap:40px;margin-bottom:28px">${renderGaugeSVG(ov.overall_score||0,140,true)}<div><h2 style="font-size:20px;font-weight:600;margin:0 0 8px">Overall Health Score</h2><div style="display:flex;gap:20px"><div><div style="font-size:22px;font-weight:700">${active.length}</div><div style="font-size:12px;color:#6B7280">Analyzed</div></div><div><div style="font-size:22px;font-weight:700;color:#1B3139">${active.filter(s=>(s.score||0)>=90).length}</div><div style="font-size:12px;color:#6B7280">Excellent</div></div><div><div style="font-size:22px;font-weight:700;color:#6B7280">${active.filter(s=>(s.score||0)>=50&&(s.score||0)<90).length}</div><div style="font-size:12px;color:#6B7280">Needs Work</div></div><div><div style="font-size:22px;font-weight:700;color:#9CA3AF">${active.filter(s=>(s.score||0)<50).length}</div><div style="font-size:12px;color:#6B7280">Critical</div></div></div></div></div>
+    <h3 style="font-size:16px;font-weight:600;margin:0 0 16px">Sections</h3>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-bottom:28px">${cards}</div>
+    ${quickWinSection}
+    ${renderCostBanner()}
     ${renderSavingsTicker()}
     ${renderInsightsPanel()}
-    <h3 style="font-size:16px;font-weight:600;margin:0 0 12px">Sections</h3>
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-bottom:32px">${cards}</div>
-    ${recs}
-    ${renderScoreBooster()}
+    ${roadmapSection}
   </div>`;
 }
 
@@ -776,13 +912,32 @@ function renderSection(){
   });
   return `<div style="padding:32px;max-width:960px;margin:0 auto">
     <button id="backBtn" class="btn" style="background:none;font-size:13px;color:#6B7280;padding:6px 0;margin-bottom:20px">\u2190 Back to Dashboard</button>
-    <div class="card" style="padding:24px;display:flex;align-items:center;gap:28px;margin-bottom:24px">${renderGaugeSVG(sec.score||0,100,false)}<div><h1 style="font-size:22px;font-weight:700;margin:0 0 4px">${esc(sec.section_name||sec.name||'')}</h1><div style="display:flex;gap:14px;margin-top:8px"><span style="font-size:13px;color:#6B7280"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2D6A4F;margin-right:4px"></span><strong style="color:#1B3139">${scored.filter(c=>c.score===100).length}</strong> Pass</span><span style="font-size:13px;color:#6B7280"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#B7791F;margin-right:4px"></span><strong style="color:#6B7280">${scored.filter(c=>c.score===50).length}</strong> Partial</span><span style="font-size:13px;color:#6B7280"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#9B2C2C;margin-right:4px"></span><strong style="color:#9CA3AF">${scored.filter(c=>c.score===0&&c.status==='fail').length}</strong> Fail</span><span style="font-size:13px;color:#6B7280"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#9CA3AF;margin-right:4px"></span><strong style="color:#6B7280">${checks.filter(c=>c.status==='info').length}</strong> Info</span></div></div></div>
+    <div class="card" style="padding:24px;display:flex;align-items:center;gap:28px;margin-bottom:24px"><div style="min-width:64px;height:64px;display:flex;align-items:center;justify-content:center;border-radius:12px;background:#F3F4F6;border:1px solid #E5E7EB"><span style="font-size:28px;font-weight:700;color:#1B3139">${sec.score!=null?Math.round(sec.score):'—'}</span></div><div><h1 style="font-size:22px;font-weight:700;margin:0 0 4px">${esc(sec.section_name||sec.name||'')}</h1><div style="display:flex;gap:14px;margin-top:8px"><span style="font-size:13px;color:#6B7280"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2D6A4F;margin-right:4px"></span><strong style="color:#1B3139">${scored.filter(c=>c.score===100).length}</strong> Pass</span><span style="font-size:13px;color:#6B7280"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#B7791F;margin-right:4px"></span><strong style="color:#6B7280">${scored.filter(c=>c.score===50).length}</strong> Partial</span><span style="font-size:13px;color:#6B7280"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#9B2C2C;margin-right:4px"></span><strong style="color:#9CA3AF">${scored.filter(c=>c.score===0&&c.status==='fail').length}</strong> Fail</span><span style="font-size:13px;color:#6B7280"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#9CA3AF;margin-right:4px"></span><strong style="color:#6B7280">${checks.filter(c=>c.status==='info').length}</strong> Info</span></div></div></div>
+    ${sec.section_id==='adoption'?renderScoreBooster():''}
     ${groups}
   </div>`;
 }
 
 // ── Events ──
 function bindEvents(){
+  // Wrapped sidebar nav
+  const wrBtn=document.getElementById('navWrapped');
+  if(wrBtn)wrBtn.onclick=()=>{window._wrappedSlide=0;state.view='wrapped';state.section=null;render()};
+  // Wrapped prev/next/back
+  const wp=document.getElementById('wrappedPrev');if(wp)wp.onclick=()=>{window._wrappedSlide=Math.max(0,(window._wrappedSlide||0)-1);render()};
+  const wn=document.getElementById('wrappedNext');if(wn)wn.onclick=()=>{window._wrappedSlide=(window._wrappedSlide||0)+1;render()};
+  const wb=document.getElementById('wrappedBack');if(wb)wb.onclick=()=>{state.view='dashboard';render()};
+  const wc=document.getElementById('wrappedClose');if(wc)wc.onclick=()=>{state.view='dashboard';render()};
+    const liBtn=document.getElementById('shareLinkedIn');if(liBtn)liBtn.onclick=()=>{
+      const ov=state.results&&state.results.overall;
+      const score=ov?Math.round(ov.overall_score):'';
+      const label=ov?.maturity_label||'';
+      const text=encodeURIComponent('I just ran the Databricks Account Health Check and scored '+score+'/100 ('+label+' maturity). Great tool for assessing cloud data platform health! #Databricks #DataEngineering #CloudData');
+      window.open('https://www.linkedin.com/sharing/share-offsite/?mini=true&url='+encodeURIComponent(window.location.origin)+'&summary='+text,'_blank','width=600,height=500');
+    };
+  // Quick Fixes sidebar nav
+  const qfBtn=document.getElementById('navQuickFixes');
+  if(qfBtn)qfBtn.onclick=()=>{state.view='quickfixes';state.section=null;render()};
   // DYK timer: start when running, clean up otherwise
   if(state.view==='running'){
     if(!window._dykTimer){
@@ -838,12 +993,17 @@ function bindEvents(){
       const cid=e.target.dataset.cid;
       if(!window._simState)window._simState={};
       window._simState[cid]=e.target.checked;
-      update();
+      const sc=document.querySelector('.main-content')||document.documentElement;
+      const sy=sc.scrollTop;
+      render();
+      requestAnimationFrame(()=>{sc.scrollTop=sy;});
     }
     if(e.target.classList.contains('ticker-toggle')){
       const sid=e.target.dataset.sid;
       if(!window._tickerState)window._tickerState={start:Date.now(),toggles:{},baseRate:0};
       window._tickerState.toggles[sid]=e.target.checked;
+      const sc2=document.querySelector('.main-content')||document.documentElement;
+      const sy2=sc2.scrollTop;
       // Re-render to update rates display
       update();
     }
@@ -912,7 +1072,8 @@ async function startCheck(){
   const sel=document.getElementById('whSelect');
   if(!sel||!sel.value)return;
   state.error=null;state.view='running';
-  state.runState={idx:0,total:12,name:'Initializing...',completed:{}};
+  state.warehouseId=sel.value;
+  state.runState={idx:0,total:9,name:'Initializing...',completed:{}};
   render();
   try{
     const res=await fetch('/api/health-check/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({warehouse_id:sel.value,include_table_analysis:true})});
@@ -964,7 +1125,7 @@ async function startCheck(){
           const data=await r.json();
           if(data.sections&&data.sections.length>0){
             if(es&&sseActive){es.close();}
-            state.results=data;state.view='dashboard';render();return;
+            state.results=data;if(data.diagnostics&&data.diagnostics.workspace_host)window._workspaceHost=data.diagnostics.workspace_host;state.view='dashboard';render();return;
           }
         }
       }catch(e){}
@@ -977,5 +1138,80 @@ async function startCheck(){
 render();
 loadWarehouses();
 </script>
+
+<!-- AI Health Advisor Chat -->
+<div id="chatFab" class="chat-fab" style="display:none" title="AI Health Advisor">
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+</div>
+<div id="chatPanel" class="chat-panel" style="display:none">
+  <div style="padding:14px 16px;background:#1B3139;color:white;display:flex;justify-content:space-between;align-items:center">
+    <div style="display:flex;align-items:center;gap:8px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg><span style="font-size:14px;font-weight:600">AI Health Advisor</span></div>
+    <button id="chatClose" style="background:none;border:none;color:rgba(255,255,255,0.6);cursor:pointer;font-size:18px">&times;</button>
+  </div>
+  <div id="chatMsgs" class="chat-msgs">
+    <div class="chat-msg ai"><div class="chat-bubble">I have full context of your health check results. Ask me anything — "Why is my compute score low?" or "What should I fix first?"</div></div>
+  </div>
+  <div class="chat-input-row">
+    <input id="chatInput" type="text" placeholder="Ask about your health check..." autocomplete="off">
+    <button id="chatSend">Send</button>
+  </div>
+</div>
+<script>
+(function(){
+  // Show FAB when results exist
+  const observer=new MutationObserver(()=>{
+    const fab=document.getElementById('chatFab');
+    if(fab){
+      const hasResults=window.state&&window.state.results&&window.state.results.overall;
+      fab.style.display=hasResults?'flex':'none';
+    }
+  });
+  observer.observe(document.body,{childList:true,subtree:true});
+  
+  document.addEventListener('click',function(e){
+    if(e.target.closest('#chatFab')){
+      document.getElementById('chatPanel').style.display='flex';
+      document.getElementById('chatFab').style.display='none';
+      document.getElementById('chatInput').focus();
+    }
+    if(e.target.closest('#chatClose')){
+      document.getElementById('chatPanel').style.display='none';
+      document.getElementById('chatFab').style.display='flex';
+    }
+    if(e.target.closest('#chatSend')){sendChat()}
+  });
+  
+  document.addEventListener('keydown',function(e){
+    if(e.key==='Enter'&&document.activeElement===document.getElementById('chatInput')){sendChat()}
+  });
+  
+  function sendChat(){
+    const input=document.getElementById('chatInput');
+    const q=input.value.trim();
+    if(!q)return;
+    input.value='';
+    
+    const msgs=document.getElementById('chatMsgs');
+    msgs.innerHTML+='<div class="chat-msg user"><div class="chat-bubble">'+q.replace(/</g,'&lt;')+'</div></div>';
+    msgs.innerHTML+='<div class="chat-msg ai" id="chatLoading"><div class="chat-bubble" style="opacity:0.6">Thinking...</div></div>';
+    msgs.scrollTop=msgs.scrollHeight;
+    
+    fetch('/api/chat',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest'},
+      body:JSON.stringify({question:q})
+    }).then(r=>r.json()).then(d=>{
+      const el=document.getElementById('chatLoading');
+      if(el)el.outerHTML='<div class="chat-msg ai"><div class="chat-bubble">'+d.answer.replace(/</g,'&lt;').replace(/
+/g,'<br>')+'</div></div>';
+      msgs.scrollTop=msgs.scrollHeight;
+    }).catch(e=>{
+      const el=document.getElementById('chatLoading');
+      if(el)el.outerHTML='<div class="chat-msg ai"><div class="chat-bubble" style="background:#9B2C2C">Error: '+e.message+'</div></div>';
+    });
+  }
+})();
+</script>
+
 </body>
 </html>

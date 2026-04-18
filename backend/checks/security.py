@@ -20,7 +20,7 @@ class SecurityCheckRunner(BaseCheckRunner):
         except Exception:
             return CheckResult("5.1.1", "IP access lists configured",
                 "Network Security", 0, "not_evaluated",
-                "Could not query IP access lists", "At least 1 IP access list")
+                "Requires workspace admin permissions to check IP access lists", "At least 1 IP access list")
         if lists:
             nc = [{"label": getattr(l, "label", ""), "list_type": str(getattr(l, "list_type", "")),
                    "ip_count": len(getattr(l, "ip_addresses", []) or []),
@@ -45,7 +45,7 @@ class SecurityCheckRunner(BaseCheckRunner):
         except Exception:
             return CheckResult("5.2.5", "PAT token max lifetime configured",
                 "Identity & Access Management", 0, "not_evaluated",
-                "Could not query token management", "<=90 days")
+                "Requires workspace admin permissions to check PAT tokens", "<=90 days")
         if not tokens:
             return CheckResult("5.2.5", "PAT token max lifetime configured",
                 "Identity & Access Management", 100, "pass",
@@ -523,12 +523,12 @@ class SecurityCheckRunner(BaseCheckRunner):
         try:
             rows = self.executor.execute("""
                 SELECT DISTINCT dc.catalog_name, dc.schema_name, dc.table_name, dc.column_name,
-                       dc.data_class AS classification
+                       dc.class_tag AS classification
                 FROM system.data_classification.results dc
                 LEFT JOIN system.information_schema.column_masks cm
                     ON dc.catalog_name = cm.table_catalog AND dc.schema_name = cm.table_schema
                     AND dc.table_name = cm.table_name AND dc.column_name = cm.column_name
-                WHERE dc.data_class IN ('PII', 'SENSITIVE', 'EMAIL', 'PHONE', 'SSN', 'ADDRESS', 'NAME')
+                WHERE dc.class_tag IN ('PII', 'SENSITIVE', 'EMAIL', 'PHONE', 'SSN', 'ADDRESS', 'NAME')
                   AND cm.column_name IS NULL
                 ORDER BY dc.catalog_name, dc.schema_name, dc.table_name LIMIT 50
             """)

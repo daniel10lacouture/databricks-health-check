@@ -367,7 +367,7 @@ class SQLAnalyticsCheckRunner(BaseCheckRunner):
         top_errors = self.executor.execute("""
             SELECT SUBSTRING(error_message, 1, 120) AS error_pattern,
                    COUNT(*) AS occurrences,
-                   COUNT(DISTINCT user_name) AS affected_users,
+                   COUNT(DISTINCT executed_by) AS affected_users,
                    COUNT(DISTINCT compute.warehouse_id) AS warehouses
             FROM system.query.history
             WHERE start_time >= DATEADD(DAY, -7, CURRENT_DATE())

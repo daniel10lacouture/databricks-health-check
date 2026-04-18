@@ -28,8 +28,8 @@ DATABRICKS_BI_TOOLS = {
 
 
 class BIToolingCheckRunner(BaseCheckRunner):
-    section_id = "bi_tooling"
-    section_name = "BI & Tooling Adoption"
+    section_id = "aibi_dashboards"
+    section_name = "AI/BI Dashboards"
     section_type = "advisory"
     icon = "bar-chart-2"
 

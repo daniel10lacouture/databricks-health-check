@@ -5,7 +5,7 @@ from checks.base import BaseCheckRunner, CheckResult, Recommendation
 
 class GovernanceCheckRunner(BaseCheckRunner):
     section_id = "governance"
-    section_name = "Governance (Unity Catalog)"
+    section_name = "Governance"
     section_type = "core"
     icon = "lock"
 
@@ -226,11 +226,11 @@ class GovernanceCheckRunner(BaseCheckRunner):
         """Check external locations and storage credentials."""
         try:
             rows = self.executor.execute("""
-                SELECT external_location_name, url, credential_name, external_location_owner
+                SELECT external_location_name, url, storage_credential_name, external_location_owner
                 FROM system.information_schema.external_locations
                 LIMIT 20""")
             creds = self.executor.execute("""
-                SELECT credential_name, credential_type, credential_owner
+                SELECT storage_credential_name, 'N/A' AS credential_type, external_location_owner AS credential_owner
                 FROM system.information_schema.storage_credentials
                 LIMIT 20""")
         except Exception:
@@ -239,8 +239,8 @@ class GovernanceCheckRunner(BaseCheckRunner):
                 "Could not query", "External locations secured with named credentials")
 
         nc_locs = [{"location": r.get("external_location_name",""), "url": r.get("url","")[:60],
-                    "credential": r.get("credential_name",""), "owner": r.get("external_location_owner","")} for r in rows[:10]]
-        nc_creds = [{"credential": r.get("credential_name",""), "type": r.get("credential_type",""),
+                    "credential": r.get("storage_credential_name",""), "owner": r.get("external_location_owner","")} for r in rows[:10]]
+        nc_creds = [{"credential": r.get("storage_credential_name",""), "type": r.get("credential_type",""),
                      "owner": r.get("credential_owner","")} for r in creds[:10]]
         nc = nc_locs + nc_creds
 

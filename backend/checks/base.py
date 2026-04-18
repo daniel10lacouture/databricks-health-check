@@ -15,6 +15,36 @@ from typing import Any, Callable, Optional
 logger = logging.getLogger("health_check")
 
 
+# ── Persistent TTL Cache (survives across health check runs) ──────────
+import hashlib
+
+_GLOBAL_CACHE: dict[str, tuple[float, list[dict]]] = {}
+_GLOBAL_CACHE_LOCK = threading.Lock()
+_CACHE_TTL = 3600  # 1 hour
+
+def _cache_key(query: str) -> str:
+    return hashlib.md5(query.strip().encode()).hexdigest()
+
+def _get_cached(query: str) -> list[dict] | None:
+    key = _cache_key(query)
+    with _GLOBAL_CACHE_LOCK:
+        if key in _GLOBAL_CACHE:
+            ts, result = _GLOBAL_CACHE[key]
+            if time.time() - ts < _CACHE_TTL:
+                return result
+            del _GLOBAL_CACHE[key]
+    return None
+
+def _set_cached(query: str, result: list[dict]):
+    key = _cache_key(query)
+    with _GLOBAL_CACHE_LOCK:
+        _GLOBAL_CACHE[key] = (time.time(), result)
+
+def clear_global_cache():
+    with _GLOBAL_CACHE_LOCK:
+        _GLOBAL_CACHE.clear()
+
+
 class Status(str, Enum):
     PASS = "pass"
     PARTIAL = "partial"
@@ -110,12 +140,12 @@ class QueryExecutor:
         self.stats = {"success": 0, "fail": 0, "cache_hit": 0, "errors": [], "token_present": bool(token), "token_prefix": (token or "")[:20]}
 
     def execute(self, query: str, use_cache: bool = True, timeout: int = 120) -> list[dict]:
-        cache_key = query.strip()
-        with self._lock:
-            if use_cache and cache_key in self._cache:
-                logger.debug("Cache hit for query")
-                self.stats["cache_hit"] += 1
-                return self._cache[cache_key]
+        if use_cache:
+            cached = _get_cached(query)
+            if cached is not None:
+                with self._lock:
+                    self.stats["cache_hit"] += 1
+                return cached
 
         import requests
 
@@ -126,7 +156,7 @@ class QueryExecutor:
                 json={
                     "warehouse_id": self.warehouse_id,
                     "statement": query.strip(),
-                    "wait_timeout": f"{min(timeout, 50)}s",
+                    "wait_timeout": "10s",
                     "disposition": "INLINE",
                     "format": "JSON_ARRAY",
                 },
@@ -200,8 +230,8 @@ class QueryExecutor:
 
         with self._lock:
             self.stats["success"] += 1
-            if use_cache:
-                self._cache[cache_key] = result
+        if use_cache:
+            _set_cached(query, result)
         return result
 
     def _poll_statement(self, statement_id: str, timeout: int) -> dict:
@@ -308,7 +338,7 @@ class BaseCheckRunner:
                 )]
 
         results = []
-        with ThreadPoolExecutor(max_workers=6) as pool:
+        with ThreadPoolExecutor(max_workers=10) as pool:
             futures = {pool.submit(_run_one, m): m for m in check_methods}
             for future in as_completed(futures):
                 results.extend(future.result())

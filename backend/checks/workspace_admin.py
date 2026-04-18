@@ -5,8 +5,8 @@ from checks.base import BaseCheckRunner, CheckResult, Recommendation
 
 
 class WorkspaceAdminCheckRunner(BaseCheckRunner):
-    section_id = "workspace_admin"
-    section_name = "Workspace Administration"
+    section_id = "governance"
+    section_name = "Governance"
     section_type = "core"
     icon = "settings"
 

@@ -99,6 +99,7 @@ def get_runners(executor, api_client, include_table_analysis):
     from checks.compute import ComputeCheckRunner
     from checks.governance import GovernanceCheckRunner
     from checks.ai_ml import AIMLCheckRunner
+    from checks.data_storage import DataStorageCheckRunner
     from checks.apps import AppsCheckRunner
     from checks.lakebase import LakebaseCheckRunner
     from checks.delta_sharing import DeltaSharingCheckRunner
@@ -120,6 +121,7 @@ def get_runners(executor, api_client, include_table_analysis):
         DeltaSharingCheckRunner(executor, api_client, include_table_analysis),
         WorkspaceAdminCheckRunner(executor, api_client, include_table_analysis),
         AdoptionCheckRunner(executor, api_client, include_table_analysis),
+        DataStorageCheckRunner(executor, api_client, include_table_analysis),
     ]
 
 
@@ -391,7 +393,7 @@ def run_health_check(warehouse_id: str, include_table_analysis: bool, user_token
             logger.info(f"  -> {runner.section_name} completed in {elapsed}s, score={result.score}")
             return idx, runner, result, elapsed
 
-        with ThreadPoolExecutor(max_workers=4) as pool:
+        with ThreadPoolExecutor(max_workers=12) as pool:
             futures = [pool.submit(run_section, (i, r)) for i, r in enumerate(runners)]
             for future in as_completed(futures):
                 try:
@@ -432,6 +434,29 @@ def run_health_check(warehouse_id: str, include_table_analysis: bool, user_token
 
         # Filter out None results (from failed sections)
         section_results = [s for s in section_results if s is not None]
+        # ── Merge sections with same section_id (consolidation) ──────────
+        merged = {}
+        for sec in section_results:
+            sid = sec["section_id"]
+            if sid not in merged:
+                merged[sid] = sec
+            else:
+                # Merge checks into existing section
+                merged[sid]["checks"].extend(sec.get("checks", []))
+                # Recalculate score as weighted average of active checks
+                all_checks = [c for c in merged[sid]["checks"] if c.get("status") not in ("not_evaluated", "info")]
+                if all_checks:
+                    merged[sid]["score"] = round(sum(c.get("score", 0) or 0 for c in all_checks) / len(all_checks), 1)
+                    merged[sid]["issues_count"] = sum(1 for c in all_checks if c.get("status") in ("fail", "partial"))
+                    merged[sid]["active"] = True
+                # Merge subsections
+                existing_subs = set()
+                for c in merged[sid]["checks"]:
+                    if c.get("subsection"):
+                        existing_subs.add(c["subsection"])
+        section_results = list(merged.values())
+
+
 
         overall = compute_overall_score(section_results)
         top_recs = get_top_recommendations(section_results, limit=10)
@@ -460,6 +485,57 @@ def run_health_check(warehouse_id: str, include_table_analysis: bool, user_token
         score_booster = _compute_score_booster(overall, section_results)
         burn_rate = _compute_burn_rate(section_results)
 
+
+        # Pillar 6: Wrapped Stats (Account Intelligence)
+        logger.info("Computing wrapped stats...")
+        push_event({"type": "progress", "section": "wrapped", "name": "Account Intelligence"})
+        wrapped_queries = {
+            "query_volume": "SELECT COUNT(*) AS total_queries, COUNT(DISTINCT executed_by) AS unique_users, COUNT(DISTINCT DATE(start_time)) AS active_days FROM system.query.history WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE())",
+            "busiest_hour": "SELECT HOUR(start_time) AS hr, DAYOFWEEK(start_time) AS dow, COUNT(*) AS cnt FROM system.query.history WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE()) GROUP BY HOUR(start_time), DAYOFWEEK(start_time) ORDER BY cnt DESC LIMIT 1",
+            "top_users": "SELECT executed_by, COUNT(*) AS queries FROM system.query.history WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE()) AND executed_by IS NOT NULL GROUP BY executed_by ORDER BY queries DESC LIMIT 5",
+            "total_dbus": "SELECT ROUND(SUM(usage_quantity), 0) AS total_dbus, COUNT(DISTINCT usage_date) AS billing_days FROM system.billing.usage WHERE usage_date >= DATEADD(DAY, -30, CURRENT_DATE()) AND usage_unit = 'DBU'",
+            "workspace_count": "SELECT COUNT(*) AS total, COUNT(CASE WHEN status = 'RUNNING' THEN 1 END) AS active FROM system.access.workspaces_latest",
+            "data_volume": "SELECT COUNT(DISTINCT CONCAT(table_catalog,'.',table_schema,'.',table_name)) AS total_tables, COUNT(DISTINCT table_catalog) AS catalogs, COUNT(DISTINCT CONCAT(table_catalog,'.',table_schema)) AS schemas FROM system.information_schema.tables WHERE table_schema != 'information_schema' AND table_catalog != 'system'",
+            "job_stats": "SELECT COUNT(DISTINCT job_id) AS unique_jobs, COUNT(*) AS total_runs, ROUND(AVG(run_duration_seconds)/60.0, 1) AS avg_duration_min FROM system.lakeflow.job_run_timeline WHERE period_start_time >= DATEADD(DAY, -30, CURRENT_DATE()) AND run_type = 'JOB_RUN' AND result_state IS NOT NULL",
+            "ai_usage": "SELECT COUNT(*) AS ai_queries FROM system.query.history WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE()) AND (statement_text LIKE '%%ai_query%%' OR statement_text LIKE '%%ai_classify%%' OR statement_text LIKE '%%ai_extract%%' OR statement_text LIKE '%%ai_forecast%%')",
+        }
+        wrapped_stats = {}
+        for wkey, wsql in wrapped_queries.items():
+            try:
+                wrows = executor.execute(wsql, timeout=180)
+                wrapped_stats[wkey] = wrows[0] if wrows else {}
+            except Exception as we:
+                logger.warning(f"Wrapped query '{wkey}' failed: {we}")
+                wrapped_stats[wkey] = {}
+
+        dow_names = {1:'Sunday',2:'Monday',3:'Tuesday',4:'Wednesday',5:'Thursday',6:'Friday',7:'Saturday'}
+        wqv = wrapped_stats.get("query_volume", {})
+        wbh = wrapped_stats.get("busiest_hour", {})
+        wtd = wrapped_stats.get("total_dbus", {})
+        wwc = wrapped_stats.get("workspace_count", {})
+        wdv = wrapped_stats.get("data_volume", {})
+        wjs = wrapped_stats.get("job_stats", {})
+        wai = wrapped_stats.get("ai_usage", {})
+
+        def _safe_int(v):
+            try:
+                return int(float(v or 0))
+            except (ValueError, TypeError):
+                return 0
+
+        wrapped_slides = [
+            {"title": "Your account ran", "big": f"{_safe_int(wqv.get('total_queries')):,}", "subtitle": "queries in the last 30 days", "icon": "query"},
+            {"title": "Powered by", "big": f"{_safe_int(wqv.get('unique_users')):,}", "subtitle": "active data practitioners", "icon": "users"},
+            {"title": "Your busiest hour is", "big": f"{dow_names.get(_safe_int(wbh.get('dow')), 'N/A')} at {_safe_int(wbh.get('hr'))}:00", "subtitle": f"when {_safe_int(wbh.get('cnt')):,} queries typically run", "icon": "clock"},
+            {"title": "Your data estate spans", "big": f"{_safe_int(wdv.get('total_tables')):,} tables", "subtitle": f"across {_safe_int(wdv.get('catalogs'))} catalogs and {_safe_int(wdv.get('schemas'))} schemas", "icon": "database"},
+            {"title": "Your team ran", "big": f"{_safe_int(wjs.get('total_runs')):,} job runs", "subtitle": f"across {_safe_int(wjs.get('unique_jobs'))} unique jobs", "icon": "jobs"},
+            {"title": "Total compute consumed", "big": f"{_safe_int(wtd.get('total_dbus')):,} DBUs", "subtitle": f"over {_safe_int(wtd.get('billing_days'))} billing days", "icon": "compute"},
+            {"title": "Operating across", "big": f"{_safe_int(wwc.get('active'))} workspaces", "subtitle": f"out of {_safe_int(wwc.get('total'))} total provisioned", "icon": "workspaces"},
+            {"title": "AI-powered queries", "big": f"{_safe_int(wai.get('ai_queries')):,}", "subtitle": "calls to ai_query, ai_classify, ai_extract, and ai_forecast", "icon": "ai"},
+        ]
+        wrapped_data = {"slides": wrapped_slides, "raw": wrapped_stats}
+        logger.info(f"Wrapped stats: {_safe_int(wqv.get('total_queries'))} queries, {_safe_int(wqv.get('unique_users'))} users")
+
         final = {
             "overall": overall,
             "sections": section_results,
@@ -468,10 +544,12 @@ def run_health_check(warehouse_id: str, include_table_analysis: bool, user_token
             "ai_insights": ai_insights,
             "score_booster": score_booster,
             "burn_rate": burn_rate,
+            "wrapped": wrapped_data,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "diagnostics": {
                 "query_stats": executor.stats,
                 "warehouse_id": warehouse_id,
+                "workspace_host": get_host(),
                 "token_source": "user (on-behalf-of)" if user_token else "SP",
             },
         }
@@ -495,6 +573,182 @@ def run_health_check(warehouse_id: str, include_table_analysis: bool, user_token
 
 
 # ── API Routes ────────────────────────────────────────────────────────
+
+
+
+@app.route("/api/wrapped")
+def wrapped_stats():
+    """Generate Spotify-Wrapped-style account stats from system tables."""
+    token = request.headers.get("x-forwarded-access-token") or get_token()
+    wh = request.args.get("warehouse_id", "")
+    if not wh:
+        return jsonify({"error": "warehouse_id required"}), 400
+    
+    from checks.base import QueryExecutor
+    host = get_host().replace("https://", "")
+    executor = QueryExecutor(host, token, wh)
+    
+    stats = {}
+    queries = {
+        "query_volume": """
+            SELECT COUNT(*) AS total_queries, 
+                   COUNT(DISTINCT executed_by) AS unique_users,
+                   COUNT(DISTINCT DATE(start_time)) AS active_days
+            FROM system.query.history 
+            WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE())""",
+        
+        "busiest_hour": """
+            SELECT HOUR(start_time) AS hr, DAYOFWEEK(start_time) AS dow, COUNT(*) AS cnt
+            FROM system.query.history
+            WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE())
+            GROUP BY HOUR(start_time), DAYOFWEEK(start_time)
+            ORDER BY cnt DESC LIMIT 1""",
+        
+        "top_users": """
+            SELECT executed_by, COUNT(*) AS queries
+            FROM system.query.history
+            WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE()) AND executed_by IS NOT NULL
+            GROUP BY executed_by ORDER BY queries DESC LIMIT 5""",
+        
+        "total_dbus": """
+            SELECT ROUND(SUM(usage_quantity), 0) AS total_dbus,
+                   COUNT(DISTINCT usage_date) AS billing_days
+            FROM system.billing.usage
+            WHERE usage_date >= DATEADD(DAY, -30, CURRENT_DATE()) AND usage_unit = 'DBU'""",
+        
+        "workspace_count": """
+            SELECT COUNT(*) AS total, COUNT(CASE WHEN status = 'RUNNING' THEN 1 END) AS active
+            FROM system.access.workspaces_latest""",
+        
+        "data_volume": """
+            SELECT COUNT(DISTINCT CONCAT(table_catalog,'.',table_schema,'.',table_name)) AS total_tables,
+                   COUNT(DISTINCT table_catalog) AS catalogs,
+                   COUNT(DISTINCT CONCAT(table_catalog,'.',table_schema)) AS schemas
+            FROM system.information_schema.tables
+            WHERE table_schema != 'information_schema' AND table_catalog != 'system'""",
+        
+        "job_stats": """
+            SELECT COUNT(DISTINCT job_id) AS unique_jobs,
+                   COUNT(*) AS total_runs,
+                   ROUND(AVG(run_duration_seconds)/60.0, 1) AS avg_duration_min
+            FROM system.lakeflow.job_run_timeline
+            WHERE period_start_time >= DATEADD(DAY, -30, CURRENT_DATE())
+              AND run_type = 'JOB_RUN' AND result_state IS NOT NULL""",
+        
+        "ai_usage": """
+            SELECT COUNT(*) AS ai_queries
+            FROM system.query.history
+            WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE())
+              AND (statement_text LIKE '%ai_query%' OR statement_text LIKE '%ai_classify%'
+                   OR statement_text LIKE '%ai_extract%' OR statement_text LIKE '%ai_forecast%')""",
+    }
+    
+    for key, sql in queries.items():
+        try:
+            rows = executor.execute(sql)
+            stats[key] = rows[0] if rows else {}
+            logger.info(f"Wrapped query '{key}': {len(rows)} rows, result={stats[key]}")
+        except Exception as e:
+            logger.warning(f"Wrapped query '{key}' failed: {e}")
+            logger.warning(f"  Token present: {bool(token)}, Token prefix: {(token or '')[:15]}..., WH: {wh}, Host: {host}")
+            stats[key] = {"_error": str(e)[:200]}
+    
+    # Build narrative slides
+    dow_names = {1:'Sunday',2:'Monday',3:'Tuesday',4:'Wednesday',5:'Thursday',6:'Friday',7:'Saturday'}
+    
+    qv = stats.get("query_volume", {})
+    bh = stats.get("busiest_hour", {})
+    tu = stats.get("top_users", {})
+    td = stats.get("total_dbus", {})
+    wc = stats.get("workspace_count", {})
+    dv = stats.get("data_volume", {})
+    js = stats.get("job_stats", {})
+    ai = stats.get("ai_usage", {})
+    
+    slides = [
+        {"title": "Your account ran", "big": f"{int(qv.get('total_queries', 0) or 0):,}", "subtitle": "queries in the last 30 days", "icon": "query"},
+        {"title": "Powered by", "big": f"{int(qv.get('unique_users', 0) or 0):,}", "subtitle": "active data practitioners", "icon": "users"},
+        {"title": "Your busiest hour is", "big": f"{dow_names.get(int(bh.get('dow', 0) or 0), 'N/A')} at {int(bh.get('hr', 0) or 0)}:00", "subtitle": f"when {int(bh.get('cnt', 0) or 0):,} queries typically run", "icon": "clock"},
+        {"title": "Your data estate spans", "big": f"{int(dv.get('total_tables', 0) or 0):,} tables", "subtitle": f"across {int(dv.get('catalogs', 0) or 0)} catalogs and {int(dv.get('schemas', 0) or 0)} schemas", "icon": "database"},
+        {"title": "Your team ran", "big": f"{int(js.get('total_runs', 0) or 0):,} job runs", "subtitle": f"across {int(js.get('unique_jobs', 0) or 0)} unique jobs (avg {js.get('avg_duration_min', 0)} min each)", "icon": "jobs"},
+        {"title": "Total compute consumed", "big": f"{int(td.get('total_dbus', 0) or 0):,} DBUs", "subtitle": f"over {int(td.get('billing_days', 0) or 0)} billing days", "icon": "compute"},
+        {"title": "Operating at scale across", "big": f"{int(wc.get('active', 0) or 0)} workspaces", "subtitle": f"out of {int(wc.get('total', 0) or 0)} total provisioned", "icon": "workspaces"},
+        {"title": "AI-powered queries", "big": f"{int(ai.get('ai_queries', 0) or 0):,}", "subtitle": "calls to ai_query, ai_classify, ai_extract, and ai_forecast", "icon": "ai"},
+    ]
+    
+    errors = {k: v.get("_error") for k, v in stats.items() if isinstance(v, dict) and "_error" in v}
+    logger.info(f"Wrapped stats complete. Errors: {errors}")
+    return jsonify({"slides": slides, "raw": stats, "errors": errors})
+
+
+@app.route("/api/chat", methods=["POST"])
+def chat():
+    """AI Health Advisor - answer questions about health check results."""
+    from genai_insights import GenAIInsights
+    
+    data = request.get_json()
+    question = data.get("question", "")
+    if not question:
+        return jsonify({"error": "question required"}), 400
+    
+    token = request.headers.get("x-forwarded-access-token") or get_token()
+    host = get_host()
+    
+    # Get current results for context
+    with state_lock:
+        results = dict(latest_results) if latest_results else {}
+    
+    if not results:
+        return jsonify({"answer": "Please run a health check first so I have data to analyze."})
+    
+    # Build context from results
+    overall = results.get("overall", {})
+    sections = results.get("sections", [])
+    
+    context_parts = [
+        f"Account Health Score: {overall.get('overall_score', 'N/A')}/100",
+        f"Maturity: {overall.get('maturity_label', 'N/A')}",
+        ""
+    ]
+    
+    for sec in sections:
+        if sec.get("active"):
+            context_parts.append(f"Section: {sec['section_name']} - Score: {sec.get('score', 'N/A')}")
+            for check in sec.get("checks", [])[:10]:
+                context_parts.append(f"  - {check.get('name', '')}: {check.get('status', '')} ({check.get('current_value', '')})")
+    
+    # Add burn rate if available
+    br = results.get("burn_rate", {})
+    if br.get("available"):
+        context_parts.append(f"\nEstimated monthly waste: ${br.get('total_monthly_waste', 0):,.0f}")
+        for s in br.get("sources", [])[:5]:
+            context_parts.append(f"  - {s.get('label', '')}: ${s.get('monthly_waste', 0):,.0f}/mo")
+    
+    context_str = "\n".join(context_parts)
+    
+    prompt = f"""You are an AI Health Advisor for a Databricks account. You have access to the following health check results.
+Answer the user's question based ONLY on this data. Be specific, cite actual numbers, and give actionable advice.
+Keep answers concise (2-3 paragraphs max). Use plain language.
+
+HEALTH CHECK DATA:
+{context_str}
+
+USER QUESTION: {question}
+
+ANSWER:"""
+    
+    try:
+        genai = GenAIInsights(host, token)
+        answer = genai._call_llm(prompt, max_tokens=800)
+        return jsonify({"answer": answer})
+    except Exception as e:
+        logger.error(f"Chat error: {e}")
+        return jsonify({"answer": f"I encountered an error: {str(e)[:200]}. Please try again."})
+
+@app.route("/api/workspace-host")
+def workspace_host():
+    host = get_host()
+    return jsonify({"host": host})
 
 @app.route("/api/warehouses")
 def list_warehouses():
