@@ -35,6 +35,8 @@ health_check_state = {
     "progress": [],
     "results": None,
     "error": None,
+    "warehouse_id": None,
+    "user_token": None,
 }
 state_lock = threading.Lock()
 
@@ -683,67 +685,186 @@ def wrapped_stats():
 
 @app.route("/api/chat", methods=["POST"])
 def chat():
-    """AI Health Advisor - answer questions about health check results."""
-    from genai_insights import GenAIInsights
-    
-    data = request.get_json()
+    """AI Health Advisor — uses ai_query() via SQL warehouse for auth compatibility."""
+    import requests as _req
+
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+    except Exception:
+        data = {}
+
+    messages = data.get("messages", [])
     question = data.get("question", "")
-    if not question:
-        return jsonify({"error": "question required"}), 400
+    if not messages and not question:
+        return jsonify({"answer": "Please ask a question."})
+
+    # Get auth — user token + warehouse from stored state or request
+    user_token = request.headers.get("x-forwarded-access-token")
+    if not user_token:
+        with state_lock:
+            user_token = health_check_state.get("user_token")
     
-    token = request.headers.get("x-forwarded-access-token") or get_token()
-    host = get_host()
-    
-    # Get current results for context
     with state_lock:
-        results = dict(latest_results) if latest_results else {}
-    
+        wh_id = health_check_state.get("warehouse_id")
+    # Client can also send warehouse_id
+    wh_id = wh_id or data.get("warehouse_id")
+
+    ws_host = get_host()
+
+    if not user_token:
+        return jsonify({"answer": "Please run a health check first to establish authentication."})
+    if not wh_id:
+        return jsonify({"answer": "No warehouse available. Please run a health check first."})
+
+    # Get results context
+    try:
+        with state_lock:
+            raw = health_check_state.get("results")
+            results = dict(raw) if raw else {}
+    except Exception:
+        results = {}
+    if not results and data.get("context"):
+        results = data["context"]
     if not results:
         return jsonify({"answer": "Please run a health check first so I have data to analyze."})
-    
-    # Build context from results
-    overall = results.get("overall", {})
-    sections = results.get("sections", [])
-    
-    context_parts = [
-        f"Account Health Score: {overall.get('overall_score', 'N/A')}/100",
-        f"Maturity: {overall.get('maturity_label', 'N/A')}",
-        ""
-    ]
-    
-    for sec in sections:
-        if sec.get("active"):
-            context_parts.append(f"Section: {sec['section_name']} - Score: {sec.get('score', 'N/A')}")
-            for check in sec.get("checks", [])[:10]:
-                context_parts.append(f"  - {check.get('name', '')}: {check.get('status', '')} ({check.get('current_value', '')})")
-    
-    # Add burn rate if available
-    br = results.get("burn_rate", {})
-    if br.get("available"):
-        context_parts.append(f"\nEstimated monthly waste: ${br.get('total_monthly_waste', 0):,.0f}")
-        for s in br.get("sources", [])[:5]:
-            context_parts.append(f"  - {s.get('label', '')}: ${s.get('monthly_waste', 0):,.0f}/mo")
-    
-    context_str = "\n".join(context_parts)
-    
-    prompt = f"""You are an AI Health Advisor for a Databricks account. You have access to the following health check results.
-Answer the user's question based ONLY on this data. Be specific, cite actual numbers, and give actionable advice.
-Keep answers concise (2-3 paragraphs max). Use plain language.
+
+    # Build context
+    try:
+        ov = results.get("overall", {})
+        secs = results.get("sections", [])
+        br = results.get("burn_rate", {})
+        ctx = [f"Score: {ov.get('overall_score','?')}/100, Maturity: {ov.get('maturity_label','?')}", ""]
+        for sec in secs:
+            if not sec.get("active"): continue
+            checks = sec.get("checks", [])
+            fails = [c for c in checks if c.get("status") in ("fail","partial")]
+            ctx.append(f"{sec.get('section_name','')}: {sec.get('score','?')}/100 ({len(fails)} issues)")
+            for c in fails[:4]:
+                ctx.append(f"  - {c.get('name','')}: {str(c.get('current_value',''))[:60]}")
+                r = c.get("recommendation") or {}
+                if r.get("action"): ctx.append(f"    Fix: {str(r['action'])[:80]}")
+        if br.get("available"):
+            ctx.append(f"Monthly waste: ~${br.get('total_monthly_waste',0):,.0f}")
+        context_str = "\n".join(ctx)[:5000]
+    except Exception as e:
+        logger.error(f"Chat context error: {e}")
+        context_str = f"Score: {results.get('overall',{}).get('overall_score','?')}/100"
+
+    # Build the user's latest message
+    user_msg = ""
+    if messages:
+        # Get the last user message for ai_query (single-turn)
+        for m in reversed(messages):
+            if m.get("role") == "user":
+                user_msg = str(m.get("content", ""))
+                break
+    elif question:
+        user_msg = question
+
+    if not user_msg:
+        return jsonify({"answer": "Please ask a question."})
+
+    # Build prompt for ai_query
+    prompt = f"""You are the Databricks Account Health Advisor. Help admins understand and act on their health check results.
+Be specific (cite scores, check names, numbers). Keep answers concise (2-3 paragraphs). Use markdown.
 
 HEALTH CHECK DATA:
 {context_str}
 
-USER QUESTION: {question}
+USER QUESTION: {user_msg}"""
 
-ANSWER:"""
-    
+    # Escape single quotes for SQL
+    safe_prompt = prompt.replace("'", "''").replace("\\", "\\\\")
+
+    # Use ai_query via Statement Execution API
+    sql = f"SELECT ai_query('databricks-claude-sonnet-4', '{safe_prompt}') AS answer"
+
     try:
-        genai = GenAIInsights(host, token)
-        answer = genai._call_llm(prompt, max_tokens=800)
-        return jsonify({"answer": answer})
+        logger.info(f"Chat: executing ai_query via warehouse {wh_id}")
+        api_resp = _req.post(
+            f"{ws_host}/api/2.0/sql/statements",
+            headers={"Authorization": f"Bearer {user_token}"},
+            json={
+                "warehouse_id": wh_id,
+                "statement": sql,
+                "wait_timeout": "50s",
+                "disposition": "INLINE",
+                "format": "JSON_ARRAY",
+            },
+            timeout=60,
+        )
+
+        if api_resp.status_code != 200:
+            logger.error(f"Chat SQL API error: {api_resp.status_code} {api_resp.text[:200]}")
+            return jsonify({"answer": f"SQL API error ({api_resp.status_code}). Please try again."})
+
+        resp_data = api_resp.json()
+        state = resp_data.get("status", {}).get("state", "")
+
+        if state == "FAILED":
+            err = resp_data.get("status", {}).get("error", {}).get("message", "Unknown error")
+            logger.error(f"Chat SQL failed: {err}")
+            return jsonify({"answer": f"Query error: {err[:200]}"})
+
+        if state == "SUCCEEDED":
+            rows = resp_data.get("result", {}).get("data_array", [])
+            if rows and rows[0]:
+                answer = rows[0][0] or "No response generated."
+                return jsonify({"answer": answer})
+            return jsonify({"answer": "No response generated."})
+
+        if state in ("PENDING", "RUNNING"):
+            # Poll for result
+            stmt_id = resp_data.get("statement_id")
+            for _ in range(30):
+                time.sleep(2)
+                poll = _req.get(
+                    f"{ws_host}/api/2.0/sql/statements/{stmt_id}",
+                    headers={"Authorization": f"Bearer {user_token}"},
+                    timeout=15,
+                )
+                pdata = poll.json()
+                pstate = pdata.get("status", {}).get("state", "")
+                if pstate == "SUCCEEDED":
+                    rows = pdata.get("result", {}).get("data_array", [])
+                    if rows and rows[0]:
+                        return jsonify({"answer": rows[0][0] or "No response."})
+                    return jsonify({"answer": "No response generated."})
+                if pstate == "FAILED":
+                    err = pdata.get("status", {}).get("error", {}).get("message", "")
+                    return jsonify({"answer": f"Query error: {err[:200]}"})
+            return jsonify({"answer": "Request timed out. Please try again."})
+
+        return jsonify({"answer": f"Unexpected state: {state}"})
+
     except Exception as e:
         logger.error(f"Chat error: {e}")
-        return jsonify({"answer": f"I encountered an error: {str(e)[:200]}. Please try again."})
+        return jsonify({"answer": f"Error: {str(e)[:200]}"})
+
+
+@app.route("/api/chat-test")
+def chat_test():
+    """Diagnostic endpoint for chat."""
+    import requests as _req
+    info = {}
+    ut = request.headers.get("x-forwarded-access-token") or ""
+    st = get_token()
+    h = get_host()
+    info["user_token"] = bool(ut)
+    info["sp_token"] = bool(st)
+    info["host"] = h[:50] if h else None
+    info["has_results"] = health_check_state.get("results") is not None
+    for label, tok in [("user", ut), ("sp", st)]:
+        if not tok: info[f"fmapi_{label}"] = "no token"; continue
+        try:
+            r = _req.post(f"{h}/serving-endpoints/databricks-claude-sonnet-4/invocations",
+                headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json"},
+                json={"messages":[{"role":"user","content":"say ok"}],"max_tokens":5}, timeout=15)
+            info[f"fmapi_{label}"] = f"HTTP {r.status_code}" + ("" if r.status_code==200 else f": {r.text[:80]}")
+        except Exception as e:
+            info[f"fmapi_{label}"] = str(e)[:100]
+    return jsonify(info)
+
 
 @app.route("/api/workspace-host")
 def workspace_host():
@@ -811,6 +932,10 @@ def start_health_check():
         with state_lock:
             health_check_state["running"] = False
         return jsonify({"error": "No user authorization token. Please re-authorize the app."}), 401
+
+    with state_lock:
+        health_check_state["warehouse_id"] = warehouse_id
+        health_check_state["user_token"] = user_token
 
     thread = threading.Thread(
         target=run_health_check,
