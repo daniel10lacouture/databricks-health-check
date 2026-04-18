@@ -83,6 +83,14 @@ select{font-family:inherit}
 .chat-suggestions{display:flex;flex-wrap:wrap;gap:6px;padding:0 16px 12px}
 .chat-suggestions button{background:#F3F4F6;border:1px solid #E5E7EB;border-radius:8px;padding:6px 12px;font-size:11px;color:#374151;cursor:pointer;font-family:inherit}
 .chat-suggestions button:hover{background:#E5E7EB}
+
+/* Trophy badges */
+.trophy-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;letter-spacing:0.3px;animation:badgeIn .4s ease-out}
+.trophy-gold{background:linear-gradient(135deg,#FEF3C7,#FDE68A);color:#92400E;border:1px solid #F59E0B}
+.trophy-platinum{background:linear-gradient(135deg,#EDE9FE,#DDD6FE);color:#5B21B6;border:1px solid #8B5CF6;box-shadow:0 0 8px rgba(139,92,246,0.3)}
+@keyframes badgeIn{from{opacity:0;transform:scale(0.7)}to{opacity:1;transform:scale(1)}}
+/* Confetti canvas */
+#confettiCanvas{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:9999}
 </style>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
@@ -762,7 +770,7 @@ function renderDashboard(){
     const isAdoption=sec.section_id==='adoption';
     const adoptionBoost=isAdoption&&state.results&&state.results.score_booster?state.results.score_booster.total_boost:0;
     const scoreHtml=isAdoption&&adoptionBoost>0?`<span class="fade-in" style="font-size:20px;font-weight:700;color:#1B3139;font-variant-numeric:tabular-nums">+${adoptionBoost} pts</span>`:sec.active&&sec.score!=null?`<span class="fade-in" style="font-size:26px;font-weight:700;color:${scoreColor(sec.score)};font-variant-numeric:tabular-nums">${Math.round(sec.score)}</span>`:`<span style="font-size:12px;color:#9CA3AF">N/A</span>`;
-    const bar=sec.active?`<div style="margin-top:14px;height:4px;background:#F5F7FA;border-radius:2px;overflow:hidden"><div style="height:100%;width:${sec.score||0}%;background:${scoreColor(sec.score||0)};border-radius:2px;transition:width .6s ease"></div></div><div style="margin-top:8px;font-size:12px;color:${issues>0?'#FF3621':'#374151'}">${issues>0?'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#FF3621;margin-right:4px"></span>'+issues+' check'+(issues>1?'s':'')+' need attention':'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2D6A4F;margin-right:4px"></span>All checks passing'}</div>`
+    const bar=sec.active?`<div style="margin-top:14px;height:4px;background:#F5F7FA;border-radius:2px;overflow:hidden"><div style="height:100%;width:${sec.score||0}%;background:${scoreColor(sec.score||0)};border-radius:2px;transition:width .6s ease"></div></div><div style="margin-top:8px;font-size:12px;color:${issues>0?'#FF3621':'#374151'}">${issues>0?'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#FF3621;margin-right:4px"></span>'+issues+' check'+(issues>1?'s':'')+' need attention':'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2D6A4F;margin-right:4px"></span>All checks passing'}</div>${trophyBadge(sec.score||0)}`
       :`<div style="margin-top:10px;font-size:12px;color:#9CA3AF">Not Evaluated \u2014 No Significant Usage</div>`;
     const adoptStyle=isAdoption?'grid-column:1/-1;background:linear-gradient(135deg,#F8FAFC,#F1F5F9);border:1px solid #CBD5E1':'';
     cards+=`<div class="card section-card" data-sid="${sec.section_id}" style="padding:18px;cursor:${sec.active?'pointer':'default'};opacity:${sec.active?1:0.5};transition:all .2s;${adoptStyle}">
@@ -939,7 +947,7 @@ function renderSection(){
   });
   return `<div style="padding:32px;max-width:960px;margin:0 auto">
     <button id="backBtn" class="btn" style="background:none;font-size:13px;color:#6B7280;padding:6px 0;margin-bottom:20px">\u2190 Back to Dashboard</button>
-    <div class="card" style="padding:24px;display:flex;align-items:center;gap:28px;margin-bottom:24px"><div style="min-width:64px;height:64px;display:flex;align-items:center;justify-content:center;border-radius:12px;background:#F3F4F6;border:1px solid #E5E7EB"><span style="font-size:28px;font-weight:700;color:#1B3139">${sec.score!=null?Math.round(sec.score):'—'}</span></div><div><h1 style="font-size:22px;font-weight:700;margin:0 0 4px">${esc(sec.section_name||sec.name||'')}</h1><div style="display:flex;gap:14px;margin-top:8px"><span style="font-size:13px;color:#6B7280"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2D6A4F;margin-right:4px"></span><strong style="color:#1B3139">${scored.filter(c=>c.score===100).length}</strong> Pass</span><span style="font-size:13px;color:#6B7280"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#B7791F;margin-right:4px"></span><strong style="color:#6B7280">${scored.filter(c=>c.score===50).length}</strong> Partial</span><span style="font-size:13px;color:#6B7280"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#9B2C2C;margin-right:4px"></span><strong style="color:#9CA3AF">${scored.filter(c=>c.score===0&&c.status==='fail').length}</strong> Fail</span><span style="font-size:13px;color:#6B7280"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#9CA3AF;margin-right:4px"></span><strong style="color:#6B7280">${checks.filter(c=>c.status==='info').length}</strong> Info</span></div></div></div>
+    <div class="card" style="padding:24px;display:flex;align-items:center;gap:28px;margin-bottom:24px"><div style="min-width:64px;height:64px;display:flex;align-items:center;justify-content:center;border-radius:12px;background:#F3F4F6;border:1px solid #E5E7EB"><span style="font-size:28px;font-weight:700;color:#1B3139">${sec.score!=null?Math.round(sec.score):'—'}</span></div><div><h1 style="font-size:22px;font-weight:700;margin:0 0 4px">${esc(sec.section_name||sec.name||'')}</h1>${trophyBadge(sec.score||0)}<div style="display:flex;gap:14px;margin-top:8px"><span style="font-size:13px;color:#6B7280"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2D6A4F;margin-right:4px"></span><strong style="color:#1B3139">${scored.filter(c=>c.score===100).length}</strong> Pass</span><span style="font-size:13px;color:#6B7280"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#B7791F;margin-right:4px"></span><strong style="color:#6B7280">${scored.filter(c=>c.score===50).length}</strong> Partial</span><span style="font-size:13px;color:#6B7280"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#9B2C2C;margin-right:4px"></span><strong style="color:#9CA3AF">${scored.filter(c=>c.score===0&&c.status==='fail').length}</strong> Fail</span><span style="font-size:13px;color:#6B7280"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#9CA3AF;margin-right:4px"></span><strong style="color:#6B7280">${checks.filter(c=>c.status==='info').length}</strong> Info</span></div></div></div>
     ${sec.section_id==='adoption'?renderScoreBooster():''}
     ${groups}
   </div>`;
@@ -1068,10 +1076,18 @@ function bindEvents(){
     };
   });
   document.querySelectorAll('.section-card').forEach(el=>{
-    el.onclick=()=>{
+    el.onclick=(e)=>{
       const sid=el.dataset.sid;
       const sec=(state.results?.sections||[]).find(s=>s.section_id===sid);
-      if(sec?.active){state.section=sid;state.view='section';render()}
+      if(sec?.active){
+        if(sec.score>=100){
+          const rect=el.getBoundingClientRect();
+          fireConfetti(rect.left+rect.width/2, rect.top+rect.height/2);
+          setTimeout(()=>{state.section=sid;state.view='section';render()},600);
+        } else {
+          state.section=sid;state.view='section';render();
+        }
+      }
     };
   });
   const adoptLink=document.getElementById('viewAllAdoption');
@@ -1301,6 +1317,60 @@ function refreshChat(){
 // Hook into render to add chat fab
 const _origRender=render;
 // Actually we'll inject the fab via bindEvents instead
+
+
+// ── Trophy Badges & Confetti ────────────────────────────────────────
+function trophyBadge(score){
+  if(score>=100) return '<span class="trophy-badge trophy-platinum"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" stroke-width="2"><path d="M6 9H4.5a2.5 2.5 0 010-5H6"/><path d="M18 9h1.5a2.5 2.5 0 000-5H18"/><path d="M4 22h16"/><path d="M10 22V8a4 4 0 018 0v14"/><path d="M6 22V8a4 4 0 018 0"/><path d="M12 2l1.5 3.5L17 7l-3.5 1.5L12 12l-1.5-3.5L7 7l3.5-1.5L12 2z"/></svg> PERFECT</span>';
+  if(score>=90) return '<span class="trophy-badge trophy-gold"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#B45309" stroke-width="2"><path d="M6 9H4.5a2.5 2.5 0 010-5H6"/><path d="M18 9h1.5a2.5 2.5 0 000-5H18"/><path d="M4 22h16"/><path d="M10 14l2-8 2 8"/><path d="M8 22V9"/><path d="M16 22V9"/></svg> ELITE</span>';
+  return '';
+}
+
+function fireConfetti(x,y){
+  let canvas=document.getElementById('confettiCanvas');
+  if(!canvas){canvas=document.createElement('canvas');canvas.id='confettiCanvas';document.body.appendChild(canvas);}
+  canvas.width=window.innerWidth;canvas.height=window.innerHeight;
+  const ctx=canvas.getContext('2d');
+  const colors=['#FF3621','#FF6B4A','#FDE68A','#8B5CF6','#2D6A4F','#3B82F6','#EC4899','#F59E0B'];
+  const particles=[];
+  for(let i=0;i<80;i++){
+    particles.push({
+      x:x||canvas.width/2, y:y||canvas.height/3,
+      vx:(Math.random()-0.5)*16, vy:Math.random()*-14-4,
+      color:colors[Math.floor(Math.random()*colors.length)],
+      size:Math.random()*6+3, rotation:Math.random()*360,
+      rotSpeed:(Math.random()-0.5)*10, gravity:0.25, drag:0.98,
+      life:1, decay:Math.random()*0.015+0.008,
+      shape:Math.random()>0.5?'rect':'circle'
+    });
+  }
+  let frame=0;
+  function animate(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    let alive=false;
+    particles.forEach(p=>{
+      if(p.life<=0)return;
+      alive=true;
+      p.vy+=p.gravity;
+      p.vx*=p.drag;
+      p.x+=p.vx;p.y+=p.vy;
+      p.rotation+=p.rotSpeed;
+      p.life-=p.decay;
+      ctx.save();
+      ctx.translate(p.x,p.y);
+      ctx.rotate(p.rotation*Math.PI/180);
+      ctx.globalAlpha=Math.max(0,p.life);
+      ctx.fillStyle=p.color;
+      if(p.shape==='rect'){ctx.fillRect(-p.size/2,-p.size/2,p.size,p.size*0.6);}
+      else{ctx.beginPath();ctx.arc(0,0,p.size/2,0,Math.PI*2);ctx.fill();}
+      ctx.restore();
+    });
+    frame++;
+    if(alive&&frame<180)requestAnimationFrame(animate);
+    else ctx.clearRect(0,0,canvas.width,canvas.height);
+  }
+  animate();
+}
 </script>
 
 </body>
