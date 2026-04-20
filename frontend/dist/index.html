@@ -85,10 +85,10 @@ select{font-family:inherit}
 .chat-suggestions button:hover{background:#E5E7EB}
 
 /* Trophy badges */
-.trophy-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;letter-spacing:0.3px;animation:badgeIn .4s ease-out}
-.trophy-gold{background:linear-gradient(135deg,#FEF3C7,#FDE68A);color:#92400E;border:1px solid #F59E0B}
-.trophy-platinum{background:linear-gradient(135deg,#EDE9FE,#DDD6FE);color:#5B21B6;border:1px solid #8B5CF6;box-shadow:0 0 8px rgba(139,92,246,0.3)}
-@keyframes badgeIn{from{opacity:0;transform:scale(0.7)}to{opacity:1;transform:scale(1)}}
+
+
+
+
 /* Confetti canvas */
 #confettiCanvas{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:9999}
 </style>
@@ -128,6 +128,7 @@ function render(){
   const newView=state.view;
   
   function doRender(){
+  try{
     if(newView==='setup') root.innerHTML=renderSetup();
     else if(newView==='running') root.innerHTML=renderRunning();
     else if(newView==='dashboard'){
@@ -140,10 +141,13 @@ function render(){
       }
     }
     else if(newView==='wrapped') root.innerHTML=renderWrapped();
-    else if(newView==='quickfixes') root.innerHTML=renderApp(renderQuickFixes());
+    else if(newView==='improvescore') root.innerHTML=renderApp(renderImproveScore());
+    else if(newView==='costoverview') root.innerHTML=renderApp(renderCostOverview());
+    else if(newView==='badges') root.innerHTML=renderApp(renderBadges());
     else if(newView==='section') root.innerHTML=renderApp(renderSection());
     root.dataset.view=newView;
     bindEvents();
+  }catch(e){console.error('Render error:',e);root.innerHTML='<div style="padding:40px;text-align:center"><h2>Rendering Error</h2><p style="color:#6B7280">'+e.message+'</p><button onclick="location.reload()" style="margin-top:16px;padding:8px 20px;background:#1B3139;color:white;border:none;border-radius:6px;cursor:pointer">Reload</button></div>';}
   }
   
   // Smooth fade transition between major views
@@ -320,12 +324,24 @@ function renderApp(content){
         ${ov?.overall_score!=null?`<div style="margin-top:12px;display:flex;align-items:center;gap:10px"><div style="width:42px;height:42px;border-radius:50%;border:2px solid rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center"><span style="font-size:16px;font-weight:700;color:white">${Math.round(ov.overall_score)}</span></div><div><div style="font-size:11px;color:white;opacity:0.8">Overall</div><div style="font-size:14px;font-weight:600;color:rgba(255,255,255,0.5)">${scoreLabel(ov.overall_score)}</div></div></div>`:''}
       </div>
       <div style="flex:1;overflow-y:auto;padding:6px 0">${sideItems}
-        <div class="sidebar-action" id="navQuickFixes" onclick="state.view='quickfixes';state.section=null;render()" style="padding:8px 14px;cursor:pointer;display:flex;align-items:center;gap:10px;margin-top:4px;border-top:1px solid rgba(255,255,255,0.08);background:${state.view==='quickfixes'?'rgba(255,255,255,0.1)':'transparent'}"><span style="display:flex;align-items:center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></span><div style="flex:1;font-size:12px;font-weight:500">Quick Fixes</div></div>
-      </div>
-      <div id="navWrapped" style="padding:8px 14px;cursor:pointer;display:flex;align-items:center;gap:10px;margin:4px 0;border-top:1px solid rgba(255,255,255,0.08)">
-          <span style="display:flex;align-items:center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"><path d="M12 2a10 10 0 110 20 10 10 0 010-20z"/><path d="M10 8l6 4-6 4V8z" fill="rgba(255,255,255,0.5)"/></svg></span>
-          <div style="flex:1;font-size:12px;font-weight:500">Account Wrapped</div>
-          <span style="font-size:9px;font-weight:600;background:#FF3621;color:white;padding:1px 6px;border-radius:8px">NEW</span>
+        <div class="sidebar-action" id="navQuickFixes" onclick="state.view='improvescore';state.section=null;render()" style="padding:8px 14px;cursor:pointer;display:flex;align-items:center;gap:10px;margin-top:4px;border-top:1px solid rgba(255,255,255,0.08);background:${state.view==='improvescore'?'rgba(255,255,255,0.1)':'transparent'}">
+          <span style="display:flex;align-items:center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg></span>
+          <div style="flex:1;font-size:12px;font-weight:500">Improve My Score</div>
+        </div>
+        <div style="margin-top:12px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.08)">
+          <div class="sidebar-action" id="navCostOverview" onclick="state.view='costoverview';state.section=null;render()" style="padding:8px 14px;cursor:pointer;display:flex;align-items:center;gap:10px;background:${state.view==='costoverview'?'rgba(255,255,255,0.1)':'transparent'}">
+            <span style="display:flex;align-items:center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 100 7h5a3.5 3.5 0 110 7H6"/></svg></span>
+            <div style="flex:1;font-size:12px;font-weight:500">Cost Overview</div>
+          </div>
+          <div class="sidebar-action" id="navBadges" onclick="state.view='badges';state.section=null;render()" style="padding:8px 14px;cursor:pointer;display:flex;align-items:center;gap:10px;background:${state.view==='badges'?'rgba(255,255,255,0.1)':'transparent'}">
+            <span style="display:flex;align-items:center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"><circle cx="12" cy="8" r="6"/><path d="M8 14l-2 8 6-3 6 3-2-8"/></svg></span>
+            <div style="flex:1;font-size:12px;font-weight:500">My Badges</div>
+          </div>
+          <div id="navWrapped" onclick="state.view='wrapped';state.section=null;render()" style="padding:8px 14px;cursor:pointer;display:flex;align-items:center;gap:10px;background:${state.view==='wrapped'?'rgba(255,255,255,0.1)':'transparent'}">
+            <span style="display:flex;align-items:center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"><path d="M12 2a10 10 0 110 20 10 10 0 010-20z"/><path d="M10 8l6 4-6 4V8z" fill="rgba(255,255,255,0.5)"/></svg></span>
+            <div style="flex:1;font-size:12px;font-weight:500">Account Wrapped</div>
+            <span style="font-size:9px;font-weight:600;background:#FF3621;color:white;padding:1px 6px;border-radius:8px">NEW</span>
+          </div>
         </div>
       <div style="padding:12px;border-top:1px solid rgba(255,255,255,0.1);font-size:10px;opacity:0.3">${r?.timestamp?'Last run: '+new Date(r.timestamp).toLocaleString():'Databricks Health Check'}</div>
     </nav>
@@ -459,6 +475,7 @@ function renderInsightsPanel(){
   }
   return h;
 }
+
 
 function renderScoreBooster(){
   const r=state.results;if(!r||!r.score_booster||!r.score_booster.available)return'';
@@ -646,6 +663,7 @@ function renderCostBanner(){
     +'<span style="font-size:14px;color:rgba(255,255,255,0.7)">Estimated annual savings opportunity:</span>'
     +'</div>'
     +'<span style="font-size:22px;font-weight:800;color:#FF6B4A">$'+amt+'</span>'
+    +'<a href="/mission-control" target="_blank" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:20px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.15);color:#E2E8F0;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer;transition:all .2s;white-space:nowrap" ><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#00E676;box-shadow:0 0 4px #00E676"></span> Mission Control <span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:#FF3621;color:white">BETA</span></a>'
     +'</div>';
 }
 
@@ -714,79 +732,175 @@ function renderWrapped(){
   </div>`;
 }
 
-function renderQuickFixes(){
+function renderImproveScore(){
   const r=state.results;if(!r)return'';
   const allRecs=r.top_recommendations||[];
   const quickWins=allRecs.filter(rec=>isQuickWin(rec.check_id));
-  
-  if(!quickWins.length)return'<div style="padding:32px;text-align:center;color:#6B7280">No quick fixes available. Run a health check first.</div>';
-  
-  let cards='';
+  const secs=r.sections||[];
+
+  // --- Instantly Boost Your Score: prompts from score_booster opportunities ---
+  const sb=r.score_booster||{};
+  const allOpps=sb.all_opportunities||sb.top_opportunities||[];
+  const prompts={'aibi_dashboard':{title:'Start using AI/BI Dashboards',prompt:'Help me create my first AI/BI dashboard. Show me which datasets are most queried and suggest a dashboard layout with key metrics and visualizations.'},
+    'genie_spaces':{title:'Set up Genie Spaces',prompt:'Help me create Genie spaces for my top datasets. Identify tables with good documentation that would work well for natural language querying by business users.'},
+    'serverless_warehouse':{title:'Switch to Serverless Warehouses',prompt:'Analyze my current SQL warehouse usage and recommend which warehouses should be migrated to serverless for cost and performance.'},
+    'photon':{title:'Enable Photon Acceleration',prompt:'Find all clusters and warehouses not using Photon and help me enable it where it would improve performance most.'},
+    'jobs_allpurpose':{title:'Migrate Jobs to Dedicated Compute',prompt:'List all jobs running on all-purpose clusters and help me migrate them to dedicated job clusters or serverless.'},
+    'identity_management':{title:'Set Up Identity Federation',prompt:'Help me review my identity management setup and guide me through enabling SCIM provisioning for automatic user sync.'},
+    'service_principal':{title:'Use Service Principals',prompt:'Identify workloads using personal credentials that should switch to service principals for better security.'},
+    'cost_tagging':{title:'Implement Cost Attribution Tags',prompt:'Help me design a cost tagging strategy and apply tags to all compute resources for chargeback reporting.'},
+    'predictive_optimization':{title:'Enable Predictive Optimization',prompt:'Find all Delta tables without predictive optimization and help me enable it to reduce maintenance overhead.'},
+    'runtime':{title:'Upgrade Runtime Versions',prompt:'Find all clusters running outdated Databricks Runtime versions and help me plan upgrades to the latest LTS release.'},
+    'ai_gateway':{title:'Adopt AI Gateway',prompt:'Help me set up AI Gateway for centralized LLM access with cost tracking and governance.'},
+    'ai_functions':{title:'Use SQL AI Functions',prompt:'Show me examples of SQL AI functions and help me identify use cases where ai_query or ai_classify could add value.'},
+    'delta_sharing':{title:'Set Up Delta Sharing',prompt:'Help me evaluate Delta Sharing for secure data collaboration without data duplication.'},
+    'streaming':{title:'Adopt Streaming Workloads',prompt:'Analyze my batch pipelines and identify which ones would benefit from streaming. Guide me through setting up structured streaming.'},
+    'consumer':{title:'Activate Consumer Users',prompt:'Help me identify potential consumer-role users who could benefit from read-only dashboards and Genie spaces.'},
+    'external_bi':{title:'Migrate from External BI',prompt:'Analyze our external BI tool usage and help me create equivalent AI/BI dashboards natively in Databricks.'}};
+
+  let boostCards='';
+  if(allOpps.length>0){
+    allOpps.forEach(opp=>{
+      const key=Object.keys(prompts).find(k=>opp.check_id?.toLowerCase().includes(k)||opp.name?.toLowerCase().includes(k));
+      const p=key?prompts[key]:{title:opp.name,prompt:'Help me address this: '+(opp.recommendation?.action||opp.name)};
+      boostCards+='<div class="card" style="padding:14px;margin-bottom:6px;border-left:3px solid #FF3621">'
+        +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">'
+        +'<div style="flex:1"><div style="font-size:13px;font-weight:600">'+esc(p.title)+'</div>'
+        +'<div style="font-size:11px;color:#6B7280;margin-top:3px;font-style:italic">'+esc(p.prompt).substring(0,120)+'...</div></div>'
+        +'<button class="btn fixit-btn" data-prompt="'+esc(p.prompt)+'" style="padding:6px 14px;font-size:11px;font-weight:600;background:#1B3139;color:white;border:none;border-radius:6px;cursor:pointer;display:flex;align-items:center;gap:5px;white-space:nowrap;flex-shrink:0">'
+        +'<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>'
+        +' Copy Prompt</button></div></div>';
+    });
+  }
+
+  // --- Fix-It prompt generator for Quick Fixes ---
+  function getFixItPrompt(rec){
+    const cn=rec.check_name||'';const act=rec.action||'';
+    const m={'predictive_optimization':'Find all tables in my workspace without predictive optimization enabled and help me enable it for each one.',
+      'idle_clusters':'I have idle interactive clusters with very low CPU utilization. Help me identify them and either optimize their configuration or terminate the unused ones.',
+      'auto_stop':'Find all SQL warehouses without auto-stop or with it set over 10 minutes, and help me set them to auto-stop after 10 minutes.',
+      'auto_termination':'Find all clusters without auto-termination and help me configure it at 20 minutes or less.',
+      'serverless':'Help me identify workloads that could benefit from switching to serverless compute and create a migration plan.',
+      'photon':'Find all clusters and warehouses not using Photon and help me enable it where it would improve performance.',
+      'hive_metastore':'List all tables still in hive_metastore that should be migrated to Unity Catalog and help me create a migration plan.',
+      'pat_token':'Find all PAT tokens with excessive lifetimes and help me set up a token lifetime policy.',
+      'policy_coverage':'Identify clusters without compute policies attached and help me create and assign appropriate policies.',
+      'table_documentation':'Find all tables missing descriptions and help me generate documentation for them.',
+      'column_documentation':'Find all columns without descriptions and help me add meaningful documentation.',
+      'runtime':'Find all clusters running unsupported or outdated runtime versions and help me upgrade them to the latest LTS.',
+      'jobs_allpurpose':'Identify all jobs running on all-purpose clusters and help me migrate them to dedicated job clusters or serverless.',
+      'orphan_jobs':'Find all jobs with no runs in the last 90 days and help me clean up the unused ones.',
+      'warehouse_type':'Help me analyze warehouse usage and recommend which should be switched to serverless or pro.'};
+    for(const[k,v]of Object.entries(m)){if(cn.toLowerCase().includes(k)||rec.check_id?.toLowerCase().includes(k))return v;}
+    return act||'Help me address this issue: '+cn;
+  }
+
+  let fixCards='';
   quickWins.forEach(rec=>{
-    const settingsUrl=getSettingsUrl(rec.check_id);
-    const docsUrl=rec.docs_url||'';
     const dotColor=rec.priority==='high'?'#9B2C2C':rec.priority==='medium'?'#B7791F':'#6B7280';
-    
-    cards+=`<div class="card" style="padding:20px;margin-bottom:10px;border-left:3px solid #2D6A4F">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
-        <div style="flex:1">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-            <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${dotColor}"></span>
-            <span style="font-size:14px;font-weight:600">${esc(rec.check_name)}</span>
-          </div>
-          <div style="font-size:13px;color:#6B7280;margin-bottom:8px">${esc(rec.action||'')}</div>
-          <div style="font-size:12px;color:#9CA3AF">${esc(rec.section_name)} \u00B7 ${esc(rec.impact||'')}</div>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">
-          ${settingsUrl?`<a href="${settingsUrl}" target="_blank" class="btn" style="padding:8px 16px;font-size:12px;font-weight:600;background:#2D6A4F;color:white;border-radius:6px;text-decoration:none;text-align:center;white-space:nowrap">Open Settings \u2197</a>`:''}
-          ${docsUrl?`<a href="${docsUrl}" target="_blank" style="padding:6px 16px;font-size:12px;color:#2563EB;text-align:center;text-decoration:none;white-space:nowrap">Documentation \u2197</a>`:''}
-        </div>
-      </div>
-    </div>`;
+    const prompt=getFixItPrompt(rec);
+    const docsUrl=rec.docs_url||'';
+    fixCards+='<div class="card" style="padding:18px;margin-bottom:8px;border-left:3px solid #2D6A4F">'
+      +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">'
+      +'<div style="flex:1">'
+      +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'
+      +'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'+dotColor+'"></span>'
+      +'<span style="font-size:14px;font-weight:600">'+esc(rec.check_name)+'</span></div>'
+      +'<div style="font-size:13px;color:#6B7280;margin-bottom:6px">'+esc(rec.action||'')+'</div>'
+      +'<div style="font-size:12px;color:#9CA3AF">'+esc(rec.section_name)+' \u00B7 '+esc(rec.impact||'')+'</div></div>'
+      +'<div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">'
+      +'<button class="btn fixit-btn" data-prompt="'+esc(prompt)+'" style="padding:8px 16px;font-size:12px;font-weight:600;background:#2D6A4F;color:white;border:none;border-radius:6px;cursor:pointer;display:flex;align-items:center;gap:6px;white-space:nowrap">'
+      +'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>'
+      +' Fix It</button>'
+      +(docsUrl?'<a href="'+esc(docsUrl)+'" target="_blank" style="padding:4px 16px;font-size:11px;color:#2563EB;text-align:center;text-decoration:none">Docs \u2197</a>':'')
+      +'</div></div></div>';
   });
+
   
-  return `<div style="padding:32px;max-width:960px;margin:0 auto">
-    <button id="backBtn" class="btn" style="background:none;font-size:13px;color:#6B7280;padding:6px 0;margin-bottom:20px">\u2190 Back to Dashboard</button>
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
-      <div style="width:40px;height:40px;border-radius:10px;background:#ECFDF5;display:flex;align-items:center;justify-content:center">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2D6A4F" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-      </div>
-      <div>
-        <h1 style="font-size:22px;font-weight:700;margin:0">Quick Fixes</h1>
-        <p style="font-size:13px;color:#6B7280;margin:2px 0 0">${quickWins.length} admin-level changes that can improve your score immediately</p>
-      </div>
-    </div>
-    ${cards}
-  </div>`;
+  return '<div style="padding:32px;max-width:960px;margin:0 auto">'
+    +'<button id="backBtn" class="btn" style="background:none;font-size:13px;color:#6B7280;padding:6px 0;margin-bottom:20px">\u2190 Back to Dashboard</button>'
+    +'<div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">'
+    +'<div style="width:40px;height:40px;border-radius:10px;background:#F1F5F9;display:flex;align-items:center;justify-content:center">'
+    +'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#1B3139" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg></div>'
+    +'<div><h1 style="font-size:22px;font-weight:700;margin:0;color:#1B3139">Improve My Score</h1>'
+    +'<p style="font-size:13px;color:#6B7280;margin:2px 0 0">Actionable recommendations to boost your health check score. Use the prompts below to implement fixes.</p></div></div>'
+    +(boostCards?'<div style="margin-bottom:28px"><h3 style="font-size:16px;font-weight:600;margin:0 0 6px;color:#1B3139">Instantly Boost Your Score</h3>'
+    +'<p style="font-size:13px;color:#6B7280;margin:4px 0 14px">Copy a prompt and paste it into Genie Code to start adopting these features</p>'
+    +boostCards+'</div>':'')
+    +(fixCards?'<div style="margin-bottom:28px"><h3 style="font-size:16px;font-weight:600;margin:0 0 6px;color:#1B3139">Quick Fixes</h3>'
+    +'<p style="font-size:13px;color:#6B7280;margin:4px 0 14px">Click "Fix It" to copy a ready-to-use Genie Code prompt</p>'
+    +fixCards+'</div>':'')
+    
+    +'</div>';
 }
 
-function renderDashboard(){
+function renderBadges(){
   const r=state.results;if(!r)return'';
-  const _rawSecs=r.sections||[];const secs=SECTIONS.map(s=>_rawSecs.find(x=>x.section_id===s.id)).filter(Boolean);const active=secs.filter(s=>s.active);const ov=r.overall||{};
-  let cards='';
-  secs.forEach(sec=>{
-    const meta=SECTIONS.find(s=>s.id===sec.section_id)||{icon:'\u2B55',name:sec.section_name};
-    const issues=(sec.checks||[]).filter(c=>c.status==='fail'||c.status==='partial').length;
-    const isAdoption=sec.section_id==='adoption';
-    const adoptionBoost=isAdoption&&state.results&&state.results.score_booster?state.results.score_booster.total_boost:0;
-    const scoreHtml=isAdoption&&adoptionBoost>0?`<span class="fade-in" style="font-size:20px;font-weight:700;color:#1B3139;font-variant-numeric:tabular-nums">+${adoptionBoost} pts</span>`:sec.active&&sec.score!=null?`<span class="fade-in" style="font-size:26px;font-weight:700;color:${scoreColor(sec.score)};font-variant-numeric:tabular-nums">${Math.round(sec.score)}</span>`:`<span style="font-size:12px;color:#9CA3AF">N/A</span>`;
-    const bar=sec.active?`<div style="margin-top:14px;height:4px;background:#F5F7FA;border-radius:2px;overflow:hidden"><div style="height:100%;width:${sec.score||0}%;background:${scoreColor(sec.score||0)};border-radius:2px;transition:width .6s ease"></div></div><div style="margin-top:8px;font-size:12px;color:${issues>0?'#FF3621':'#374151'}">${issues>0?'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#FF3621;margin-right:4px"></span>'+issues+' check'+(issues>1?'s':'')+' need attention':'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2D6A4F;margin-right:4px"></span>All checks passing'}</div>${trophyBadge(sec.score||0)}`
-      :`<div style="margin-top:10px;font-size:12px;color:#9CA3AF">Not Evaluated \u2014 No Significant Usage</div>`;
-    const adoptStyle=isAdoption?'grid-column:1/-1;background:linear-gradient(135deg,#F8FAFC,#F1F5F9);border:1px solid #CBD5E1':'';
-    cards+=`<div class="card section-card" data-sid="${sec.section_id}" style="padding:18px;cursor:${sec.active?'pointer':'default'};opacity:${sec.active?1:0.5};transition:all .2s;${adoptStyle}">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start"><div style="display:flex;align-items:center;gap:10px"><span style="display:flex;align-items:center;color:#1B3139">${SVG_ICONS[sec.section_id]||meta.icon}</span><div><div style="font-size:14px;font-weight:600">${esc(meta.name)}</div><div style="font-size:11px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.5px">${sec.section_type}</div></div></div>${scoreHtml}</div>${bar}</div>`;
+  const secs=r.sections||[];
+
+  let sectionBadges='';
+  SECTIONS.forEach(function(s){
+    const sec=secs.find(function(x){return x.section_id===s.id});
+    const score=sec?.active?Math.round(sec.score||0):0;
+    const tierDefs=[{key:'bronze',min:55,label:'Bronze',color:'#CD7F32',bg:'#FDF2E6'},
+      {key:'silver',min:70,label:'Silver',color:'#A8A9AD',bg:'#F4F4F5'},
+      {key:'gold',min:85,label:'Gold',color:'#DAA520',bg:'#FFFBEB'},
+      {key:'perfect',min:100,label:'Perfect',color:'#8B5CF6',bg:'#F5F3FF'}];
+    let tierBadges='';
+    tierDefs.forEach(function(t){
+      const earned=score>=t.min;
+      tierBadges+='<div style="text-align:center;opacity:'+(earned?'1':'0.25')+';filter:'+(earned?'none':'grayscale(1)')+'">'+v6Badge(s.id,earned?t.min:0,40)+'<div style="font-size:9px;color:'+(earned?t.color:'#9CA3AF')+';font-weight:600;margin-top:2px">'+t.label+'</div></div>';
+    });
+    sectionBadges+='<div class="card" style="padding:16px"><div style="font-size:13px;font-weight:600;margin-bottom:10px;display:flex;align-items:center;gap:6px">'+(SVG_ICONS[s.id]||s.icon)+'<span>'+esc(s.name)+'</span>'+(score>0?'<span style="font-size:11px;color:#9CA3AF;margin-left:auto">'+score+'/100</span>':'')+'</div><div style="display:flex;justify-content:space-around;gap:6px">'+tierBadges+'</div></div>';
   });
-  // #7 Remediation Roadmap + #8 Quick Wins + #9 Direct Settings Links
+
+  const indBadges=[
+    {id:'genie_power',name:'Genie Code Champion',icon:'\u2728',earned:(function(){const s=secs.find(function(x){return x.section_id==='genai_ml'});return s?.checks?.some(function(c){return c.check_id==='12.3.1'&&c.score>=70})})(),desc:'Top Genie Code adoption'},
+    {id:'docs_complete',name:'Documentation Master',icon:'\uD83D\uDCD6',earned:(function(){const s=secs.find(function(x){return x.section_id==='governance'});return s?.checks?.some(function(c){return c.name?.includes('documentation')&&c.score>=90})})(),desc:'All tables documented'},
+    {id:'dashboard_pro',name:'Dashboard Pro',icon:'\uD83D\uDCCA',earned:(function(){const s=secs.find(function(x){return x.section_id==='aibi_dashboards'});return s?.active&&(s.score||0)>=70})(),desc:'Active AI/BI dashboards'},
+    {id:'agent_pioneer',name:'Agent Pioneer',icon:'\uD83E\uDD16',earned:(function(){const s=secs.find(function(x){return x.section_id==='genai_ml'});return s?.checks?.some(function(c){return c.check_id?.includes('agentbricks')&&c.score>=50})})(),desc:'Deployed an agent'},
+    {id:'genie_architect',name:'Genie Architect',icon:'\uD83E\uDE84',earned:(function(){const s=secs.find(function(x){return x.section_id==='aibi_dashboards'});return s?.checks?.some(function(c){return c.check_id?.includes('genie')&&c.score>=70})})(),desc:'Active Genie spaces'}
+  ];
+  let indHtml='';
+  indBadges.forEach(function(b){
+    indHtml+='<div class="card" style="padding:12px 16px;display:flex;align-items:center;gap:12px;opacity:'+(b.earned?'1':'0.4')+';filter:'+(b.earned?'none':'grayscale(1)')+'">'
+      +'<span style="font-size:22px">'+b.icon+'</span>'
+      +'<div style="flex:1"><div style="font-size:13px;font-weight:600">'+esc(b.name)+'</div>'
+      +'<div style="font-size:11px;color:#6B7280">'+esc(b.desc)+'</div></div>'
+      +(b.earned?'<span style="font-size:10px;color:#2D6A4F;background:#ECFDF5;padding:2px 8px;border-radius:8px;font-weight:600">EARNED</span>'
+      :'<span style="font-size:10px;color:#9CA3AF">\uD83D\uDD12 Locked</span>')
+      +'</div>';
+  });
+
+  const earnedCount=SECTIONS.filter(function(x){const sec=secs.find(function(y){return y.section_id===x.id});return sec?.active&&(sec.score||0)>=55}).length;
+
+  return '<div style="padding:32px;max-width:1000px;margin:0 auto">'
+    +'<button id="backBtn" class="btn" style="background:none;font-size:13px;color:#6B7280;padding:6px 0;margin-bottom:20px">\u2190 Back to Dashboard</button>'
+    +'<div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">'
+    +'<div style="width:40px;height:40px;border-radius:10px;background:#FFFBEB;display:flex;align-items:center;justify-content:center">'
+    +'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#DAA520" stroke-width="2"><circle cx="12" cy="8" r="6"/><path d="M8 14l-2 8 6-3 6 3-2-8"/></svg></div>'
+    +'<div><h1 style="font-size:22px;font-weight:700;margin:0">My Badges</h1>'
+    +'<p style="font-size:13px;color:#6B7280;margin:2px 0 0">'+earnedCount+' of '+SECTIONS.length+' section badges earned</p></div>'
+    +'<a href="#" onclick="(function(){const s=Math.round(state.results?.overall?.overall_score||0);const t=encodeURIComponent(\'I scored \'+s+\'/100 on the Databricks Account Health Check! #Databricks #DataEngineering\');window.open(\'https://www.linkedin.com/sharing/share-offsite/?url=\'+encodeURIComponent(window.location.href)+\'&summary=\'+t,\'_blank\',\'width=600,height=400\')})();return false" style="font-size:12px;color:#0A66C2;display:flex;align-items:center;gap:4px;text-decoration:none;margin-left:auto;padding:6px 14px;border:1px solid #0A66C2;border-radius:6px">'
+    +'<svg width="14" height="14" viewBox="0 0 24 24" fill="#0A66C2"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>'
+    +' Share on LinkedIn</a></div>'
+    +'<h3 style="font-size:16px;font-weight:600;margin:0 0 16px;color:#1B3139">Section Badges</h3>'
+    +'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-bottom:28px">'+sectionBadges+'</div>'
+    +'<h3 style="font-size:16px;font-weight:600;margin:0 0 12px;color:#1B3139">Individual Achievements</h3>'
+    +'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px;margin-bottom:20px">'+indHtml+'</div>'
+    +'</div>';
+}
+
+function renderCostOverview(){
+  const r=state.results;if(!r)return'';
   const allRecs=r.top_recommendations||[];
-  const quickWins=allRecs.filter(rec=>isQuickWin(rec.check_id));
   const thisWeek=allRecs.filter(rec=>rec.priority==='high'&&!isQuickWin(rec.check_id));
   const thisMonth=allRecs.filter(rec=>rec.priority==='medium'&&!isQuickWin(rec.check_id));
   const thisQuarter=allRecs.filter(rec=>rec.priority==='low'&&!isQuickWin(rec.check_id));
-  
+
   function renderRecCard(rec){
     const pc=rec.priority==='high'?'#9B2C2C':rec.priority==='medium'?'#B7791F':'#6B7280';
-    const settingsUrl=getSettingsUrl(rec.check_id);
-    const settingsLink=settingsUrl?`<a href="${settingsUrl}" target="_blank" style="font-size:11px;color:#2563EB;font-weight:500;margin-right:12px">Open Settings \u2197</a>`:'';
+    const prompt=rec.action||'Help me fix: '+rec.check_name;
     const docsLink=rec.docs_url?`<a href="${esc(rec.docs_url)}" target="_blank" style="font-size:11px;color:#6B7280">Docs \u2197</a>`:'';
     const dollarBadge=rec.dollar_impact?`<span style="font-size:11px;font-weight:600;color:#2D6A4F;background:#ECFDF5;padding:2px 8px;border-radius:10px">${esc(rec.dollar_impact)}</span>`:'';
     return `<div class="card" style="padding:14px;border-left:3px solid ${pc};margin-bottom:6px">
@@ -798,63 +912,87 @@ function renderDashboard(){
           <span style="font-size:11px;color:#9CA3AF">${esc(rec.section_name)}</span>
         </div>
       </div>
-      <div style="margin-top:6px;display:flex;gap:4px;align-items:center">${settingsLink}${docsLink}</div>
+      <div style="margin-top:6px;display:flex;gap:8px;align-items:center">
+        <button class="btn fixit-btn" data-prompt="${esc(prompt)}" style="padding:4px 10px;font-size:11px;font-weight:600;background:#2D6A4F;color:white;border:none;border-radius:4px;cursor:pointer;display:flex;align-items:center;gap:4px">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+          Fix It</button>
+        ${docsLink}
+      </div>
     </div>`;
   }
-  
-  let quickWinHtml='';
-  if(quickWins.length>0){
-    quickWins.slice(0,4).forEach(rec=>{
-      const settingsUrl=getSettingsUrl(rec.check_id);
-      const link=settingsUrl?settingsUrl:rec.docs_url||'';
-      quickWinHtml+=`<a href="${link}" target="_blank" style="text-decoration:none">
-        <div class="card" style="padding:12px 14px;border:1px solid #D1FAE5;background:#F0FDF4;cursor:pointer;transition:all .15s">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-            <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2D6A4F"></span>
-            <span style="font-size:12px;font-weight:600;color:#1B3139">${esc(rec.check_name)}</span>
-          </div>
-          <div style="font-size:11px;color:#6B7280">${esc((rec.action||'').substring(0,80))}...</div>
-        </div>
-      </a>`;
-    });
-  }
-  
-  let roadmapHtml='';
+
   function renderPhase(label,icon,items,color){
     if(items.length===0)return'';
-    let cards='';items.slice(0,3).forEach(rec=>{cards+=renderRecCard(rec)});
+    let cards='';items.forEach(rec=>{cards+=renderRecCard(rec)});
+    const needsScroll=items.length>4;
+    const scrollStyle=needsScroll?'max-height:300px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#CBD5E1 transparent':'';
     return `<div style="margin-bottom:20px">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
         <div style="width:24px;height:24px;border-radius:50%;background:${color};display:flex;align-items:center;justify-content:center;font-size:12px;color:white;font-weight:700">${icon}</div>
         <span style="font-size:14px;font-weight:600;color:#1B3139">${label}</span>
-        <span style="font-size:12px;color:#9CA3AF">(${items.length} item${items.length>1?'s':''})</span>
+        <span style="font-size:12px;color:#9CA3AF">(${items.length})</span>
       </div>
-      ${cards}
+      <div style="${scrollStyle}">${cards}</div>
     </div>`;
   }
+
+  let roadmapHtml='';
   roadmapHtml+=renderPhase('This Week','!',thisWeek,'#9B2C2C');
   roadmapHtml+=renderPhase('This Month','\u2192',thisMonth,'#B7791F');
   roadmapHtml+=renderPhase('This Quarter','\u2026',thisQuarter,'#6B7280');
 
-  let quickWinSection='';
-  let roadmapSection='';
-  if(quickWinHtml||roadmapHtml){
-    quickWinSection=(quickWinHtml?`<div style="margin-bottom:24px"><div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2D6A4F"" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg><h3 style="font-size:16px;font-weight:600;margin:0;color:#1B3139">Quick Wins</h3><span style="font-size:12px;color:#6B7280">One-click admin changes</span></div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px">${quickWinHtml}</div></div>`:'');
-    roadmapSection=`<h3 style="font-size:16px;font-weight:600;margin:0 0 16px;color:#1B3139">Remediation Roadmap</h3>`+roadmapHtml;
-  }
+  const br=r.burn_rate||{};
+  const savingsHtml=br.estimated_annual_savings?`<div class="card" style="padding:20px;margin-bottom:24px;border:1px solid #D1FAE5;background:#F0FDF4">
+    <div style="display:flex;align-items:center;gap:12px">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#2D6A4F" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 100 7h5a3.5 3.5 0 110 7H6"/></svg>
+      <div><div style="font-size:18px;font-weight:700;color:#2D6A4F">${esc(br.estimated_annual_savings)}</div>
+        <div style="font-size:13px;color:#6B7280">Estimated annual savings opportunity</div></div>
+    </div>
+  </div>`:'';
 
+  return `<div style="padding:32px;max-width:960px;margin:0 auto">
+    <button id="backBtn" class="btn" style="background:none;font-size:13px;color:#6B7280;padding:6px 0;margin-bottom:20px">\u2190 Back to Dashboard</button>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
+      <div style="width:40px;height:40px;border-radius:10px;background:#F1F5F9;display:flex;align-items:center;justify-content:center">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#1B3139" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 100 7h5a3.5 3.5 0 110 7H6"/></svg>
+      </div>
+      <div>
+        <h1 style="font-size:22px;font-weight:700;margin:0;color:#1B3139">Cost Overview</h1>
+        <p style="font-size:13px;color:#6B7280;margin:2px 0 0">Compute and storage cost analysis with optimization opportunities across your account.</p>
+      </div>
+    </div>
+    ${savingsHtml}
+    ${renderSavingsTicker()}
+    <h3 style="font-size:16px;font-weight:600;margin:0 0 16px;color:#1B3139">Remediation Roadmap</h3>
+    ${roadmapHtml||'<div style="color:#6B7280;font-size:13px">No recommendations available. Run a health check first.</div>'}
+  </div>`;
+}
+
+function renderDashboard(){
+  const r=state.results;if(!r)return'';
+  const _rawSecs=r.sections||[];const secs=SECTIONS.map(s=>_rawSecs.find(x=>x.section_id===s.id)).filter(Boolean);const active=secs.filter(s=>s.active);const ov=r.overall||{};
+  let cards='';
+  secs.forEach(sec=>{
+    const meta=SECTIONS.find(s=>s.id===sec.section_id)||{icon:'\u2B55',name:sec.section_name};
+    const issues=(sec.checks||[]).filter(c=>c.status==='fail'||c.status==='partial').length;
+    
+    const isAdoption=sec.section_id==='adoption';
+    const scoreHtml=sec.active&&sec.score!=null?`<span class="fade-in" style="font-size:26px;font-weight:700;color:${scoreColor(sec.score)};font-variant-numeric:tabular-nums">${Math.round(sec.score)}</span>`:`<span style="font-size:12px;color:#9CA3AF">N/A</span>`;
+    const bar=sec.active?`<div style="margin-top:14px;height:4px;background:#F5F7FA;border-radius:2px;overflow:hidden"><div style="height:100%;width:${sec.score||0}%;background:${scoreColor(sec.score||0)};border-radius:2px;transition:width .6s ease"></div></div><div style="margin-top:8px;font-size:12px;color:${issues>0?'#FF3621':'#374151'}">${issues>0?'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#FF3621;margin-right:4px"></span>'+issues+' check'+(issues>1?'s':'')+' need attention':'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2D6A4F;margin-right:4px"></span>All checks passing'}</div>${sec.active?v6Badge(sec.section_id,Math.round(sec.score||0),48):''}`
+      :`<div style="margin-top:10px;font-size:12px;color:#9CA3AF">Not Evaluated \u2014 No Significant Usage</div>`;
+    const adoptStyle=isAdoption?'grid-column:1/-1;background:linear-gradient(135deg,#F8FAFC,#F1F5F9);border:1px solid #CBD5E1':'';
+    cards+=`<div class="card section-card" data-sid="${sec.section_id}" style="padding:18px;cursor:${sec.active?'pointer':'default'};opacity:${sec.active?1:0.5};transition:all .2s;${adoptStyle}">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start"><div style="display:flex;align-items:center;gap:10px"><span style="display:flex;align-items:center;color:#1B3139">${SVG_ICONS[sec.section_id]||meta.icon}</span><div><div style="font-size:14px;font-weight:600">${esc(meta.name)}</div><div style="font-size:11px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.5px">${sec.section_type}</div></div></div>${scoreHtml}</div>${bar}</div>`;
+  });
+  
   return `<div style="padding:32px;max-width:1200px;margin:0 auto">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;flex-wrap:wrap;gap:8px"><div><h1 style="font-size:24px;font-weight:700;margin:0">Account Health Dashboard</h1><p style="font-size:13px;color:#6B7280;margin-top:4px">${r.timestamp?new Date(r.timestamp).toLocaleString():''}</p></div><div style="display:flex;gap:8px"><button id="checklistBtn" class="btn card" style="padding:8px 16px;font-size:13px;font-weight:500">\u2611 Export Checklist</button><button id="exportBtn" class="btn card" style="padding:8px 16px;font-size:13px;font-weight:500">\u2B07 Export Report</button></div></div>
 
     <div class="card" style="padding:28px;display:flex;align-items:center;gap:40px;margin-bottom:28px">${renderGaugeSVG(ov.overall_score||0,140,true)}<div><h2 style="font-size:20px;font-weight:600;margin:0 0 8px">Overall Health Score</h2><div style="display:flex;gap:20px"><div><div style="font-size:22px;font-weight:700">${active.length}</div><div style="font-size:12px;color:#6B7280">Analyzed</div></div><div><div style="font-size:22px;font-weight:700;color:#1B3139">${active.filter(s=>(s.score||0)>=90).length}</div><div style="font-size:12px;color:#6B7280">Excellent</div></div><div><div style="font-size:22px;font-weight:700;color:#6B7280">${active.filter(s=>(s.score||0)>=50&&(s.score||0)<90).length}</div><div style="font-size:12px;color:#6B7280">Needs Work</div></div><div><div style="font-size:22px;font-weight:700;color:#9CA3AF">${active.filter(s=>(s.score||0)<50).length}</div><div style="font-size:12px;color:#6B7280">Critical</div></div></div></div></div>
     <h3 style="font-size:16px;font-weight:600;margin:0 0 16px">Sections</h3>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-bottom:28px">${cards}</div>
-    ${quickWinSection}
-    ${renderCostBanner()}
-    ${renderSavingsTicker()}
-    ${renderInsightsPanel()}
-    ${roadmapSection}
-  </div>`;
+    
+    </div>`;
 }
 
 function renderDetailTable(items){
@@ -873,9 +1011,15 @@ function renderDetailTable(items){
 
 /* Universal detail renderer — handles ALL possible detail keys from any check */
 function renderAllDetails(det, checkStatus){
+  const bestPracticeBanner='<div style="margin-top:8px;padding:10px 14px;background:#F0FDF4;border:1px solid #BBF7D0;border-radius:6px;font-size:12px;color:#166534"><strong><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2D6A4F;margin-right:6px;vertical-align:middle"></span>Best practice achieved.</strong> This check meets or exceeds the target. Continue maintaining this standard.</div>';
   if(!det || typeof det !== 'object' || Object.keys(det).length === 0) {
-    if(checkStatus === 'pass') return '<div style="margin-top:8px;padding:10px 14px;background:#F0FDF4;border:1px solid #BBF7D0;border-radius:6px;font-size:12px;color:#166534"><strong><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2D6A4F;margin-right:6px;vertical-align:middle"></span>Best practice achieved.</strong> This check meets or exceeds the target. Continue maintaining this standard.</div>';
+    if(checkStatus === 'pass') return bestPracticeBanner;
     return '<div style="margin-top:8px;font-size:12px;color:#9CA3AF">No additional details available.</div>';
+  }
+  if(checkStatus === 'pass') {
+    const hasData=Object.values(det).some(function(v){return Array.isArray(v)?v.length>0:v!=null&&v!==''&&v!==0});
+    const hasNonConformingData=Object.keys(det).some(function(k){return k==='non_conforming'&&Array.isArray(det[k])&&det[k].length>0});
+    if(!hasNonConformingData) return bestPracticeBanner;
   }
   let html='';
   const summary=det.summary||'';
@@ -947,14 +1091,47 @@ function renderSection(){
   });
   return `<div style="padding:32px;max-width:960px;margin:0 auto">
     <button id="backBtn" class="btn" style="background:none;font-size:13px;color:#6B7280;padding:6px 0;margin-bottom:20px">\u2190 Back to Dashboard</button>
-    <div class="card" style="padding:24px;display:flex;align-items:center;gap:28px;margin-bottom:24px"><div style="min-width:64px;height:64px;display:flex;align-items:center;justify-content:center;border-radius:12px;background:#F3F4F6;border:1px solid #E5E7EB"><span style="font-size:28px;font-weight:700;color:#1B3139">${sec.score!=null?Math.round(sec.score):'—'}</span></div><div><h1 style="font-size:22px;font-weight:700;margin:0 0 4px">${esc(sec.section_name||sec.name||'')}</h1>${trophyBadge(sec.score||0)}<div style="display:flex;gap:14px;margin-top:8px"><span style="font-size:13px;color:#6B7280"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2D6A4F;margin-right:4px"></span><strong style="color:#1B3139">${scored.filter(c=>c.score===100).length}</strong> Pass</span><span style="font-size:13px;color:#6B7280"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#B7791F;margin-right:4px"></span><strong style="color:#6B7280">${scored.filter(c=>c.score===50).length}</strong> Partial</span><span style="font-size:13px;color:#6B7280"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#9B2C2C;margin-right:4px"></span><strong style="color:#9CA3AF">${scored.filter(c=>c.score===0&&c.status==='fail').length}</strong> Fail</span><span style="font-size:13px;color:#6B7280"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#9CA3AF;margin-right:4px"></span><strong style="color:#6B7280">${checks.filter(c=>c.status==='info').length}</strong> Info</span></div></div></div>
-    ${sec.section_id==='adoption'?renderScoreBooster():''}
+    <div class="card" style="padding:24px;display:flex;align-items:center;gap:20px;margin-bottom:24px"><div style="min-width:64px;height:64px;display:flex;align-items:center;justify-content:center;border-radius:12px;background:#F3F4F6;border:1px solid #E5E7EB"><span style="font-size:28px;font-weight:700;color:#1B3139">${sec.score!=null?Math.round(sec.score):'\u2014'}</span></div><div style="flex:1"><h1 style="font-size:22px;font-weight:700;margin:0 0 4px">${esc(sec.section_name||sec.name||'')}</h1>${sec.active&&sec.score!=null?`<div style="display:flex;gap:14px;margin-top:8px"><span style="font-size:13px;color:#6B7280"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#2D6A4F;margin-right:4px"></span><strong style="color:#1B3139">${scored.filter(c=>c.score===100).length}</strong> Pass</span><span style="font-size:13px;color:#6B7280"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#B7791F;margin-right:4px"></span><strong style="color:#6B7280">${scored.filter(c=>c.score===50).length}</strong> Partial</span><span style="font-size:13px;color:#6B7280"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#FF3621;margin-right:4px"></span><strong style="color:#9CA3AF">${scored.filter(c=>c.score===0&&c.status==='fail').length}</strong> Fail</span><span style="font-size:13px;color:#6B7280"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#9CA3AF;margin-right:4px"></span><strong style="color:#6B7280">${checks.filter(c=>c.status==='info').length}</strong> Info</span></div>`:''}</div><div style="flex-shrink:0">${sec.active?v6Badge(sec.section_id,Math.round(sec.score||0),90):''}</div></div>
+    
     ${groups}
+    ${renderBadgeProgress(sec)}
   </div>`;
 }
 
 // ── Events ──
 function bindEvents(){
+  const bdgBtn=document.getElementById('navBadges');if(bdgBtn)bdgBtn.onclick=function(){state.view='badges';state.section=null;render();};
+
+  // Fix It / Copy Prompt clipboard handler
+  document.querySelectorAll('.fixit-btn').forEach(btn=>{
+    btn.addEventListener('click',function(e){
+      e.stopPropagation();
+      const prompt=this.getAttribute('data-prompt');
+      if(prompt){
+        navigator.clipboard.writeText(prompt).then(()=>{
+          const orig=this.innerHTML;
+          this.innerHTML='<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg> Copied!';
+          this.style.background='#16A34A';
+          setTimeout(()=>{this.innerHTML=orig;this.style.background='';},1800);
+        });
+      }
+    });
+  });
+
+  // Score simulator toggles (in Improve My Score tab)
+  document.querySelectorAll('.sim-toggle').forEach(cb=>{
+    cb.addEventListener('change',function(){
+      const cid=this.getAttribute('data-cid');
+      if(!window._simState)window._simState={};
+      window._simState[cid]=this.checked;
+      render();
+    });
+  });
+
+  // Cost Overview nav
+  const coBtn=document.getElementById('navCostOverview');
+  if(coBtn){coBtn.onclick=function(){state.view='costoverview';state.section=null;render();};}
+
 
     // ── AI Chat Fab ──
     const existingFab=document.getElementById('chatFab');
@@ -986,7 +1163,7 @@ function bindEvents(){
     };
   // Quick Fixes sidebar nav
   const qfBtn=document.getElementById('navQuickFixes');
-  if(qfBtn)qfBtn.onclick=()=>{state.view='quickfixes';state.section=null;render()};
+  if(qfBtn)qfBtn.onclick=()=>{state.view='improvescore';state.section=null;render()};
   // DYK timer: start when running, clean up otherwise
   if(state.view==='running'){
     if(!window._dykTimer){
@@ -1036,27 +1213,29 @@ function bindEvents(){
     el.textContent='$'+wasted.toFixed(2);
     el.style.color=rate>0?'#FF6B4A':'#2D6A4F';
   },100);
-  // Ticker toggle handlers (delegated)
-  document.addEventListener('change',function(e){
-    if(e.target.classList.contains('sim-toggle')){
-      const cid=e.target.dataset.cid;
-      if(!window._simState)window._simState={};
-      window._simState[cid]=e.target.checked;
-      const sc=document.querySelector('.main-content')||document.documentElement;
-      const sy=sc.scrollTop;
-      render();
-      requestAnimationFrame(()=>{sc.scrollTop=sy;});
-    }
-    if(e.target.classList.contains('ticker-toggle')){
-      const sid=e.target.dataset.sid;
-      if(!window._tickerState)window._tickerState={start:Date.now(),toggles:{},baseRate:0};
-      window._tickerState.toggles[sid]=e.target.checked;
-      const sc2=document.querySelector('.main-content')||document.documentElement;
-      const sy2=sc2.scrollTop;
-      // Re-render to update rates display
-      update();
-    }
-  });
+  // Ticker toggle handlers (delegated) — attach ONCE
+  if(!window._changeListenerBound){
+    window._changeListenerBound=true;
+    document.addEventListener('change',function(e){
+      if(e.target.classList.contains('sim-toggle')){
+        const cid=e.target.dataset.cid;
+        if(!window._simState)window._simState={};
+        window._simState[cid]=e.target.checked;
+        const sc=document.querySelector('.main-content')||document.documentElement;
+        const sy=sc.scrollTop;
+        render();
+        requestAnimationFrame(()=>{sc.scrollTop=sy;});
+      }
+      if(e.target.classList.contains('ticker-toggle')){
+        const sid=e.target.dataset.sid;
+        if(!window._tickerState)window._tickerState={start:Date.now(),toggles:{},baseRate:0};
+        window._tickerState.toggles[sid]=e.target.checked;
+        const sc2=document.querySelector('.main-content')||document.documentElement;
+        const sy2=sc2.scrollTop;
+        update();
+      }
+    });
+  }
 
   const runBtn=document.getElementById('runBtn');
   if(runBtn) runBtn.onclick=startCheck;
@@ -1319,59 +1498,311 @@ const _origRender=render;
 // Actually we'll inject the fab via bindEvents instead
 
 
-// ── Trophy Badges & Confetti ────────────────────────────────────────
-function trophyBadge(score){
-  if(score>=100) return '<span class="trophy-badge trophy-platinum"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" stroke-width="2"><path d="M6 9H4.5a2.5 2.5 0 010-5H6"/><path d="M18 9h1.5a2.5 2.5 0 000-5H18"/><path d="M4 22h16"/><path d="M10 22V8a4 4 0 018 0v14"/><path d="M6 22V8a4 4 0 018 0"/><path d="M12 2l1.5 3.5L17 7l-3.5 1.5L12 12l-1.5-3.5L7 7l3.5-1.5L12 2z"/></svg> PERFECT</span>';
-  if(score>=90) return '<span class="trophy-badge trophy-gold"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#B45309" stroke-width="2"><path d="M6 9H4.5a2.5 2.5 0 010-5H6"/><path d="M18 9h1.5a2.5 2.5 0 000-5H18"/><path d="M4 22h16"/><path d="M10 14l2-8 2 8"/><path d="M8 22V9"/><path d="M16 22V9"/></svg> ELITE</span>';
-  return '';
+
+
+
+
+// ── V6 BADGE SYSTEM ─────────────────────────────────────────────────
+const V6_ACCENTS={
+  data_engineering:{c:'#FF3621',c2:'#CC2B1A',lite:'#FF6B5A'},
+  sql_analytics:{c:'#00A972',c2:'#00875A',lite:'#3DC99A'},
+  compute_cost:{c:'#F2A900',c2:'#CC8E00',lite:'#FFCA4F'},
+  security:{c:'#1B96FF',c2:'#0D7FE8',lite:'#5AB4FF'},
+  governance:{c:'#8B5CF6',c2:'#7040E0',lite:'#A88BFA'},
+  genai_ml:{c:'#FF6584',c2:'#E04F6B',lite:'#FF8DA4'},
+  aibi_dashboards:{c:'#00B8A9',c2:'#009688',lite:'#3DD6C8'},
+  data_storage:{c:'#FF8142',c2:'#E06A2E',lite:'#FFA170'},
+  apps:{c:'#098DFF',c2:'#0070CC',lite:'#4FAFFF'},
+  adoption:{c:'#FF3621',c2:'#CC2B1A',lite:'#FF6B5A'}
+};
+const V6_STARS={bronze:1,silver:2,gold:3,perfect:4};
+const V6_STAR_FILL={bronze:'#CD7F32',silver:'#C0C0C0',gold:'#FFD700',perfect:'#A78BFA'};
+const V6_TIER_LABELS={bronze:'BRONZE',silver:'SILVER',gold:'GOLD',perfect:'CHAMPION'};
+const V6_SECTION_TEXT={
+  data_engineering:['DATA','ENGINEERING'],sql_analytics:['SQL','ANALYTICS'],
+  compute_cost:['COMPUTE','& COST'],security:['SECURITY &','COMPLIANCE'],
+  governance:['GOVERN-','ANCE'],genai_ml:['GEN AI','& ML'],
+  aibi_dashboards:['AI/BI','DASHBOARDS'],data_storage:['DATA','STORAGE'],
+  apps:['DATABRICKS','APPS'],adoption:['PLATFORM','ADOPTION']
+};
+
+function v6GetTier(score){
+  if(score>=100)return 'perfect';
+  if(score>=85)return 'gold';
+  if(score>=70)return 'silver';
+  if(score>=55)return 'bronze';
+  return 'none';
 }
 
+function v6Star(cx,cy,r,fill){
+  let pts=[];
+  for(let i=0;i<10;i++){
+    const a=-Math.PI/2+i*Math.PI/5;
+    const rd=i%2===0?r:r*0.38;
+    pts.push((cx+rd*Math.cos(a)).toFixed(1)+','+(cy+rd*Math.sin(a)).toFixed(1));
+  }
+  return '<polygon points="'+pts.join(' ')+'" fill="'+fill+'"/>';
+}
+
+function v6Badge(sectionId,score,size){
+  size=size||64;
+  const tier=v6GetTier(score);
+  if(tier==='none'){
+    // Locked grey badge
+    const tx=V6_SECTION_TEXT[sectionId]||['',''];
+    const luid='lock_'+sectionId+'_'+Math.random().toString(36).slice(2,6);
+    const lW=130,lH=190;
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 '+lW+' '+lH+'" width="'+size+'" height="'+(size*lH/lW).toFixed(0)+'" style="opacity:0.35;filter:grayscale(1)">'
+      +'<defs><linearGradient id="lbg_'+luid+'" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#2A2F3A"/><stop offset="100%" stop-color="#1A1E28"/></linearGradient>'
+      +'<clipPath id="lcl_'+luid+'"><path d="M10,0 L120,0 C126,0 130,4 130,10 L130,135 L65,'+lH+' L0,135 L0,10 C0,4 4,0 10,0Z"/></clipPath></defs>'
+      +'<path d="M10,0 L120,0 C126,0 130,4 130,10 L130,135 L65,'+lH+' L0,135 L0,10 C0,4 4,0 10,0Z" fill="url(#lbg_'+luid+')"/>'
+      +'<rect x="0" y="0" width="'+lW+'" height="18" fill="#22262F" clip-path="url(#lcl_'+luid+')"/>'
+      +'<rect x="0" y="18" width="'+lW+'" height="44" fill="#3A3F4A" clip-path="url(#lcl_'+luid+')"/>'
+      +'<text x="65" y="38" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="14" font-weight="800" fill="white" letter-spacing="2.5" opacity="0.4">'+tx[0]+'</text>'
+      +'<text x="65" y="54" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="14" font-weight="800" fill="white" letter-spacing="2.5" opacity="0.4">'+tx[1]+'</text>'
+      +'<rect x="0" y="62" width="'+lW+'" height="28" fill="#1E2028" clip-path="url(#lcl_'+luid+')"/>'
+      +'<g transform="translate(65,76)">'
+      +'<rect x="-8" y="-4" width="16" height="12" rx="2.5" fill="#4A4F5A" stroke="#5A5F6A" stroke-width="1.2"/>'
+      +'<path d="M-5,-4 C-5,-10 5,-10 5,-4" fill="none" stroke="#5A5F6A" stroke-width="1.5" stroke-linecap="round"/>'
+      +'<circle cx="0" cy="2" r="1.5" fill="#6A6F7A"/>'
+      +'</g>'
+      +'<text x="65" y="150" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="8.5" font-weight="700" fill="#5A5F6A" letter-spacing="3">LOCKED</text>'
+      +'<path d="M14,4 L116,4 C121,4 126,9 126,14 L126,133 L65,184 L4,133 L4,14 C4,9 9,4 14,4Z" fill="none" stroke="#3A3F4A" stroke-width="0.4" opacity="0.3"/>'
+      +'</svg>';
+  }
+  const ac=V6_ACCENTS[sectionId];if(!ac)return '';
+  const c=ac.c,c2=ac.c2;
+  const sf=V6_STAR_FILL[tier];
+  const ns=V6_STARS[tier];
+  const tl=V6_TIER_LABELS[tier];
+  const tx=V6_SECTION_TEXT[sectionId]||['',''];
+  const uid=sectionId+'_'+tier+'_'+Math.random().toString(36).slice(2,6);
+  const W=130,H=190,cx=65;
+
+  const shield='M10,0 L120,0 C126,0 130,4 130,10 L130,135 L65,'+H+' L0,135 L0,10 C0,4 4,0 10,0Z';
+
+  // Stars
+  const starY=76;
+  const pos={1:[[cx,starY]],2:[[cx-10,starY],[cx+10,starY]],3:[[cx-18,starY],[cx,starY],[cx+18,starY]],4:[[cx-24,starY],[cx-8,starY],[cx+8,starY],[cx+24,starY]]};
+  let stars='';
+  (pos[ns]||[]).forEach(function(p,i){
+    const sz=(ns<=2||i===Math.floor(ns/2))?6.5:5.5;
+    stars+=v6Star(p[0],p[1],sz,sf);
+  });
+
+  // Star connecting lines
+  const firstStar=pos[ns][0],lastStar=pos[ns][pos[ns].length-1];
+  const starLines='<line x1="25" y1="'+starY+'" x2="'+(firstStar[0]-12)+'" y2="'+starY+'" stroke="'+sf+'" stroke-width="0.5" opacity="0.3"/><line x1="'+(lastStar[0]+12)+'" y1="'+starY+'" x2="105" y2="'+starY+'" stroke="'+sf+'" stroke-width="0.5" opacity="0.3"/>';
+
+  // Diagonal strips on band
+  let diags='';
+  for(let i=0;i<5;i++){
+    const xo=-20+i*40;
+    diags+='<line x1="'+xo+'" y1="18" x2="'+(xo+44)+'" y2="62" stroke="white" stroke-width="12" opacity="0.03"/>';
+  }
+
+  // Bottom waves
+  let waves='';
+  for(let i=0;i<5;i++){
+    const yw=98+i*8;
+    const amp=4-i*0.5;
+    const op=(0.3-i*0.04).toFixed(2);
+    const sw=(1.5-i*0.15).toFixed(1);
+    waves+='<path d="M10,'+yw+' Q32,'+(yw-amp)+' 55,'+yw+' Q78,'+(yw+amp)+' 100,'+yw+' Q112,'+(yw-amp)+' 120,'+yw+'" fill="none" stroke="'+c+'" stroke-width="'+sw+'" opacity="'+op+'"/>';
+  }
+
+  // Quarter circles
+  const qcy=132;
+  const qc='<path d="M0,'+qcy+' Q0,'+(qcy-20)+' 20,'+(qcy-20)+'" fill="'+c+'" opacity="0.08"/><path d="M130,'+qcy+' Q130,'+(qcy-20)+' 110,'+(qcy-20)+'" fill="'+c+'" opacity="0.08"/>';
+
+  // Semicircles
+  const smy=118;
+  const semi='<circle cx="0" cy="'+smy+'" r="8" fill="'+c+'" opacity="0.06"/><circle cx="130" cy="'+smy+'" r="8" fill="'+c+'" opacity="0.06"/>';
+
+  // Corner blocks
+  const cby=94;
+  const cb='<rect x="10" y="'+cby+'" width="8" height="8" fill="'+c+'" opacity="0.12"/><rect x="12" y="'+(cby+2)+'" width="4" height="4" fill="'+c+'" opacity="0.08"/><rect x="112" y="'+cby+'" width="8" height="8" fill="'+c+'" opacity="0.12"/><rect x="114" y="'+(cby+2)+'" width="4" height="4" fill="'+c+'" opacity="0.08"/>';
+
+  // Center geo
+  const cgy=122;
+  const cgeo='<circle cx="65" cy="'+cgy+'" r="12" fill="none" stroke="'+c+'" stroke-width="1" opacity="0.15"/><circle cx="65" cy="'+cgy+'" r="6" fill="none" stroke="'+c+'" stroke-width="0.8" opacity="0.12"/><circle cx="65" cy="'+cgy+'" r="2" fill="'+c+'" opacity="0.2"/>';
+
+  const svg='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 '+W+' '+H+'" width="'+size+'" height="'+(size*H/W).toFixed(0)+'">'
+    +'<defs>'
+    +'<linearGradient id="bg_'+uid+'" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#1B2D45"/><stop offset="100%" stop-color="#0D1B2A"/></linearGradient>'
+    +'<linearGradient id="hdr_'+uid+'" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#243B5C"/><stop offset="100%" stop-color="#152238"/></linearGradient>'
+    +'<linearGradient id="ban_'+uid+'" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="'+c2+'"/><stop offset="50%" stop-color="'+c+'"/><stop offset="100%" stop-color="'+c2+'"/></linearGradient>'
+    +'<clipPath id="cl_'+uid+'"><path d="'+shield+'"/></clipPath>'
+    +'</defs>'
+    +'<path d="'+shield+'" fill="url(#bg_'+uid+')"/>'
+    +'<rect x="0" y="0" width="'+W+'" height="18" fill="url(#hdr_'+uid+')" clip-path="url(#cl_'+uid+')"/>'
+    +'<g transform="translate(65,9)" opacity="0.5"><rect x="-4" y="-4" width="3.5" height="3.5" rx="0.5" fill="white" opacity="0.7"/><rect x="1" y="-4" width="3.5" height="3.5" rx="0.5" fill="white" opacity="0.5"/><rect x="-4" y="1" width="3.5" height="3.5" rx="0.5" fill="white" opacity="0.5"/><rect x="1" y="1" width="3.5" height="3.5" rx="0.5" fill="white" opacity="0.35"/></g>'
+    +'<line x1="0" y1="18" x2="'+W+'" y2="18" stroke="'+c+'" stroke-width="0.5" opacity="0.15"/>'
+    +'<rect x="0" y="18" width="'+W+'" height="44" fill="url(#ban_'+uid+')" clip-path="url(#cl_'+uid+')"/>'
+    +diags
+    +'<rect x="0" y="18" width="'+W+'" height="1" fill="white" opacity="0.12" clip-path="url(#cl_'+uid+')"/>'
+    +'<rect x="0" y="61" width="'+W+'" height="1" fill="black" opacity="0.15" clip-path="url(#cl_'+uid+')"/>'
+    +'<text x="'+cx+'" y="38" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="14" font-weight="800" fill="white" letter-spacing="2.5">'+tx[0]+'</text>'
+    +'<text x="'+cx+'" y="54" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="14" font-weight="800" fill="white" letter-spacing="2.5">'+tx[1]+'</text>'
+    +'<rect x="0" y="62" width="'+W+'" height="28" fill="#152238" clip-path="url(#cl_'+uid+')"/>'
+    +starLines+stars
+    +cb+waves+semi+qc+cgeo
+    +'<text x="'+cx+'" y="150" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="8.5" font-weight="700" fill="'+c+'" letter-spacing="3" opacity="0.5">'+tl+'</text>'
+    +'<path d="M14,4 L116,4 C121,4 126,9 126,14 L126,133 L65,184 L4,133 L4,14 C4,9 9,4 14,4Z" fill="none" stroke="'+c+'" stroke-width="0.4" opacity="0.1"/>'
+    +'<circle cx="'+cx+'" cy="168" r="2.5" fill="'+c+'" opacity="0.15"/>'
+    +'<circle cx="'+cx+'" cy="175" r="1.5" fill="'+c+'" opacity="0.1"/>'
+    +'</svg>';
+  return svg;
+}
+
+function v6TierLabel(score){
+  const tier=v6GetTier(score);
+  if(tier==='none')return '';
+  const colors={bronze:'#CD7F32',silver:'#A8A9AD',gold:'#DAA520',perfect:'#8B5CF6'};
+  const bgs={bronze:'#FDF2E6',silver:'#F4F4F5',gold:'#FFFBEB',perfect:'#F5F3FF'};
+  const labels={bronze:'BRONZE',silver:'SILVER',gold:'GOLD',perfect:'PERFECT'};
+  return '<span style="display:inline-flex;align-items:center;padding:2px 10px;border-radius:10px;font-size:11px;font-weight:700;letter-spacing:0.5px;background:'+bgs[tier]+';color:'+colors[tier]+';border:1px solid '+colors[tier]+'">'+labels[tier]+'</span>';
+}
+
+// Badge Progress card
+function renderBadgeProgress(sec){
+  if(!sec||!sec.active)return '';
+  const score=Math.round(sec.score||0);
+  const tier=v6GetTier(score);
+  const checks=sec.checks||[];
+  const failing=checks.filter(function(x){return x.status==='fail'||x.status==='partial'});
+  const tiers=[{key:'bronze',label:'Bronze',min:55,color:'#CD7F32',bg:'#FDF2E6'},{key:'silver',label:'Silver',min:70,color:'#A8A9AD',bg:'#F4F4F5'},{key:'gold',label:'Gold',min:85,color:'#DAA520',bg:'#FFFBEB'},{key:'perfect',label:'Perfect',min:100,color:'#8B5CF6',bg:'#F5F3FF'}];
+  let milestones='';
+  tiers.forEach(function(t){
+    const achieved=score>=t.min;
+    const isCurrent=(tier===t.key);
+    const isNext=!achieved&&!tiers.some(function(x){return x.min>score&&x.min<t.min});
+    const ptsNeeded=t.min-score;
+    let si=achieved?'<svg width="16" height="16" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="'+t.color+'"/><path d="M8 12l3 3 5-5" stroke="white" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>':'<div style="width:16px;height:16px;border-radius:50%;border:2px solid '+(isNext?t.color:'#D1D5DB')+';background:white"></div>';
+    let fl='';
+    if(isNext&&failing.length>0){
+      const sorted=[].concat(failing).sort(function(a,b){return(b.weight||1)-(a.weight||1)});
+      fl='<div style="margin:6px 0 0 28px">';
+      sorted.slice(0,4).forEach(function(chk){
+        const rec=chk.recommendation||{};
+        fl+='<div style="font-size:11px;color:#4B5563;margin:3px 0;display:flex;align-items:flex-start;gap:4px"><span style="color:'+t.color+';font-weight:700">\u2192</span><span><strong>'+esc(chk.name)+'</strong>'+(rec.action?' \u2014 '+esc(String(rec.action).substring(0,80)):'')+'</span></div>';
+      });
+      if(failing.length>4)fl+='<div style="font-size:11px;color:#9CA3AF;margin-left:12px">+'+(failing.length-4)+' more</div>';
+      fl+='</div>';
+    }
+    milestones+='<div style="display:flex;align-items:flex-start;gap:12px;padding:8px 0;'+(isCurrent?'background:'+t.bg+';border-radius:8px;padding:10px 12px;margin:2px -12px':'')+'">'+si+'<div style="flex:1"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span style="font-size:13px;font-weight:'+(isCurrent?'700':'600')+';color:'+(achieved?t.color:'#6B7280')+'">'+t.label+'</span><span style="font-size:11px;color:#9CA3AF">('+t.min+'+ pts)</span>'+(isCurrent?'<span style="font-size:10px;background:'+t.color+';color:white;padding:1px 6px;border-radius:8px;font-weight:700">CURRENT</span>':'')+(isNext&&ptsNeeded>0?'<span style="font-size:10px;background:#E5E7EB;color:#374151;padding:1px 6px;border-radius:8px;font-weight:600">'+ptsNeeded+' pts away</span>':'')+'</div>'+fl+'</div></div>';
+  });
+  const pct=Math.min(100,score);
+  const barColor=score>=100?'linear-gradient(90deg,#CD7F32,#A8A9AD,#DAA520,#8B5CF6)':score>=85?'linear-gradient(90deg,#CD7F32,#DAA520)':score>=70?'linear-gradient(90deg,#CD7F32,#A8A9AD)':score>=55?'#CD7F32':'#D1D5DB';
+  const tierMarks=tiers.map(function(t){return '<div style="position:absolute;left:'+t.min+'%;top:-4px;height:calc(100% + 8px);width:1px;background:#D1D5DB" title="'+t.label+': '+t.min+'+"></div>'}).join('');
+  const badgeHtml=v6Badge(sec.section_id,score,72);
+  const tierC=v6GetTier(score);
+  const tierLbls={none:'No Badge Yet',bronze:'Bronze',silver:'Silver',gold:'Gold',perfect:'Perfect'};
+  const tierClrs={none:'#9CA3AF',bronze:'#CD7F32',silver:'#A8A9AD',gold:'#DAA520',perfect:'#8B5CF6'};
+  return '<div class="card" style="padding:24px;margin-top:24px"><div style="display:flex;align-items:center;gap:8px;margin-bottom:16px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1B3139" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg><span style="font-size:16px;font-weight:700;color:#1B3139">Badge Progress</span></div><div style="display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap"><div style="text-align:center">'+badgeHtml+'<div style="margin-top:4px;font-size:12px;font-weight:600;color:'+(tierClrs[tierC]||'#9CA3AF')+'">'+(tierLbls[tierC]||'')+'</div></div><div style="flex:1;min-width:260px"><div style="position:relative;height:8px;background:#F3F4F6;border-radius:4px;margin-bottom:20px;overflow:visible"><div style="height:100%;width:'+pct+'%;background:'+barColor+';border-radius:4px;transition:width .6s ease"></div>'+tierMarks+'<div style="position:absolute;left:'+pct+'%;top:-6px;width:20px;height:20px;background:white;border:2px solid '+(tierClrs[tierC]||'#9CA3AF')+';border-radius:50%;transform:translateX(-50%);display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:800;color:'+(tierClrs[tierC]||'#6B7280')+'">'+score+'</div></div>'+milestones+'</div></div></div>';
+}
+
+// ── CONFETTI (gold 85-99) ──
 function fireConfetti(x,y){
   let canvas=document.getElementById('confettiCanvas');
-  if(!canvas){canvas=document.createElement('canvas');canvas.id='confettiCanvas';document.body.appendChild(canvas);}
+  if(!canvas){canvas=document.createElement('canvas');canvas.id='confettiCanvas';canvas.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:9999';document.body.appendChild(canvas);}
   canvas.width=window.innerWidth;canvas.height=window.innerHeight;
   const ctx=canvas.getContext('2d');
-  const colors=['#FF3621','#FF6B4A','#FDE68A','#8B5CF6','#2D6A4F','#3B82F6','#EC4899','#F59E0B'];
+  const colors=['#FFD700','#DAA520','#FDE68A','#F59E0B','#FBBF24','#F0C420','#EAB308','#D4A420'];
   const particles=[];
-  for(let i=0;i<80;i++){
-    particles.push({
-      x:x||canvas.width/2, y:y||canvas.height/3,
-      vx:(Math.random()-0.5)*16, vy:Math.random()*-14-4,
-      color:colors[Math.floor(Math.random()*colors.length)],
-      size:Math.random()*6+3, rotation:Math.random()*360,
-      rotSpeed:(Math.random()-0.5)*10, gravity:0.25, drag:0.98,
-      life:1, decay:Math.random()*0.015+0.008,
-      shape:Math.random()>0.5?'rect':'circle'
-    });
+  for(let i=0;i<60;i++){
+    particles.push({x:x||canvas.width/2,y:y||canvas.height/3,vx:(Math.random()-0.5)*14,vy:Math.random()*-12-3,color:colors[Math.floor(Math.random()*colors.length)],size:Math.random()*5+3,rotation:Math.random()*360,rotSpeed:(Math.random()-0.5)*8,gravity:0.22,drag:0.98,life:1,decay:Math.random()*0.012+0.008,shape:Math.random()>0.5?'rect':'circle'});
   }
   let frame=0;
   function animate(){
     ctx.clearRect(0,0,canvas.width,canvas.height);
     let alive=false;
-    particles.forEach(p=>{
-      if(p.life<=0)return;
-      alive=true;
-      p.vy+=p.gravity;
-      p.vx*=p.drag;
-      p.x+=p.vx;p.y+=p.vy;
-      p.rotation+=p.rotSpeed;
-      p.life-=p.decay;
-      ctx.save();
-      ctx.translate(p.x,p.y);
-      ctx.rotate(p.rotation*Math.PI/180);
-      ctx.globalAlpha=Math.max(0,p.life);
-      ctx.fillStyle=p.color;
-      if(p.shape==='rect'){ctx.fillRect(-p.size/2,-p.size/2,p.size,p.size*0.6);}
+    particles.forEach(function(p){
+      if(p.life<=0)return;alive=true;
+      p.vy+=p.gravity;p.vx*=p.drag;p.x+=p.vx;p.y+=p.vy;p.rotation+=p.rotSpeed;p.life-=p.decay;
+      ctx.save();ctx.translate(p.x,p.y);ctx.rotate(p.rotation*Math.PI/180);ctx.globalAlpha=Math.max(0,p.life);ctx.fillStyle=p.color;
+      if(p.shape==='rect')ctx.fillRect(-p.size/2,-p.size/2,p.size,p.size*0.6);
       else{ctx.beginPath();ctx.arc(0,0,p.size/2,0,Math.PI*2);ctx.fill();}
       ctx.restore();
     });
     frame++;
-    if(alive&&frame<180)requestAnimationFrame(animate);
+    if(alive&&frame<150)requestAnimationFrame(animate);
     else ctx.clearRect(0,0,canvas.width,canvas.height);
   }
   animate();
 }
+
+// ── FIREWORKS (perfect 100) ──
+function fireFireworks(x,y){
+  let canvas=document.getElementById('confettiCanvas');
+  if(!canvas){canvas=document.createElement('canvas');canvas.id='confettiCanvas';canvas.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:9999';document.body.appendChild(canvas);}
+  canvas.width=window.innerWidth;canvas.height=window.innerHeight;
+  const ctx=canvas.getContext('2d');
+  const rockets=[];const sparks=[];
+  const palettes=[['#8B5CF6','#A78BFA','#C4B5FD','#DDD6FE','#7C3AED'],['#FFD700','#FDE68A','#F59E0B','#FBBF24','#EAB308'],['#FF3621','#FF6B5A','#FF8E7A','#FC5C65','#E85555']];
+  // Launch 5 rockets from bottom
+  for(let i=0;i<5;i++){
+    const tx=(x||canvas.width/2)+(Math.random()-0.5)*300;
+    const ty=(y||canvas.height/3)+(Math.random()-0.5)*100;
+    rockets.push({x:tx,y:canvas.height+10,tx:tx,ty:ty,vy:-12-Math.random()*4,vx:(Math.random()-0.5)*2,life:1,palette:palettes[i%palettes.length],exploded:false,trail:[]});
+  }
+  let frame=0;
+  function animate(){
+    ctx.fillStyle='rgba(0,0,0,0.08)';ctx.fillRect(0,0,canvas.width,canvas.height);
+    // Update rockets
+    rockets.forEach(function(r){
+      if(r.exploded)return;
+      r.trail.push({x:r.x,y:r.y,life:1});
+      r.y+=r.vy;r.x+=r.vx;r.vy+=0.15;
+      // Draw trail
+      r.trail.forEach(function(t,ti){
+        t.life-=0.04;
+        if(t.life>0){ctx.beginPath();ctx.arc(t.x,t.y,2*t.life,0,Math.PI*2);ctx.fillStyle='rgba(255,255,255,'+t.life*0.6+')';ctx.fill();}
+      });
+      // Draw rocket
+      ctx.beginPath();ctx.arc(r.x,r.y,3,0,Math.PI*2);ctx.fillStyle='white';ctx.fill();
+      // Explode when velocity slows
+      if(r.vy>-2||r.y<r.ty){
+        r.exploded=true;
+        for(let j=0;j<40;j++){
+          const angle=Math.random()*Math.PI*2;
+          const speed=Math.random()*6+2;
+          sparks.push({x:r.x,y:r.y,vx:Math.cos(angle)*speed,vy:Math.sin(angle)*speed,color:r.palette[Math.floor(Math.random()*r.palette.length)],life:1,decay:Math.random()*0.01+0.008,size:Math.random()*3+1.5,gravity:0.06,trail:[]});
+        }
+      }
+    });
+    // Update sparks
+    let alive=false;
+    sparks.forEach(function(s){
+      if(s.life<=0)return;alive=true;
+      s.trail.push({x:s.x,y:s.y,life:0.6});
+      s.vy+=s.gravity;s.vx*=0.98;s.x+=s.vx;s.y+=s.vy;s.life-=s.decay;
+      // Spark trails
+      s.trail.forEach(function(t){t.life-=0.06;if(t.life>0){ctx.beginPath();ctx.arc(t.x,t.y,s.size*0.5*t.life,0,Math.PI*2);ctx.fillStyle=s.color;ctx.globalAlpha=t.life*0.3;ctx.fill();ctx.globalAlpha=1;}});
+      // Spark
+      ctx.beginPath();ctx.arc(s.x,s.y,s.size*s.life,0,Math.PI*2);ctx.fillStyle=s.color;ctx.globalAlpha=s.life;ctx.fill();ctx.globalAlpha=1;
+    });
+    // Check if rockets still flying
+    const rocketsFlying=rockets.some(function(r){return !r.exploded});
+    // Second wave at frame 80
+    if(frame===80){
+      for(let i=0;i<3;i++){
+        const tx2=(x||canvas.width/2)+(Math.random()-0.5)*400;
+        const ty2=(y||canvas.height/3)+(Math.random()-0.5)*150;
+        rockets.push({x:tx2,y:canvas.height+10,tx:tx2,ty:ty2,vy:-10-Math.random()*4,vx:(Math.random()-0.5)*3,life:1,palette:palettes[i%palettes.length],exploded:false,trail:[]});
+      }
+    }
+    frame++;
+    if((alive||rocketsFlying)&&frame<500)requestAnimationFrame(animate);
+    else{ctx.clearRect(0,0,canvas.width,canvas.height);}
+  }
+  animate();
+}
+
+
 </script>
 
 </body>
-</html>
+</html
+      
+>

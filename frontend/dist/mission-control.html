@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Mission Control | Databricks</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0A0E17;--bg2:#0F1520;--bg3:#151C2C;--border:#1E293B;--border2:#293548;
+  --text:#E2E8F0;--text2:#94A3B8;--text3:#64748B;--text4:#475569;
+  --red:#FF3621;--green:#00E676;--redSoft:#FF5252;--gold:#F2A900;
+  --blue:#1B96FF;--purple:#8B5CF6;--teal:#00B8A9;--pink:#FF6584;
+  --bronze:#CD7F32;--silver:#A0AEC0;--goldT:#F2A900;
+}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+/* Loading */
+.load-overlay{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:200;transition:opacity .5s}
+.load-overlay.hidden{opacity:0;pointer-events:none}
+.load-spinner{width:44px;height:44px;border:3px solid var(--border);border-top-color:var(--red);border-radius:50%;animation:spin .8s linear infinite}
+.load-title{margin-top:20px;font-size:20px;font-weight:800;letter-spacing:-.5px}
+.load-sub{margin-top:8px;color:var(--text3);font-size:13px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Header */
+.header{display:flex;align-items:center;justify-content:space-between;padding:10px 20px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg2)}
+.header-left{display:flex;align-items:center;gap:10px}
+.mc-logo{font-size:15px;font-weight:800;color:var(--text);display:flex;align-items:center;gap:6px}
+.live-dot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(0,230,118,.4)}50%{box-shadow:0 0 0 5px rgba(0,230,118,0)}}
+.header-center{display:flex;align-items:center;gap:12px}
+.score-pill{display:flex;align-items:center;gap:10px;padding:6px 16px;border-radius:20px;background:var(--bg3);border:1px solid var(--border2);cursor:pointer;transition:all .2s}
+.score-pill:hover{border-color:var(--text3)}
+.score-num{font-size:22px;font-weight:800}
+.score-num.bronze{color:var(--bronze)}.score-num.silver{color:var(--silver)}.score-num.gold{color:var(--goldT)}.score-num.champion{color:var(--purple)}
+.score-info{display:flex;flex-direction:column}
+.score-tier{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px}
+.score-tier.bronze{color:var(--bronze)}.score-tier.silver{color:var(--silver)}.score-tier.gold{color:var(--goldT)}.score-tier.champion{color:var(--purple)}
+.score-sub{font-size:9px;color:var(--text4)}
+.score-bar-w{width:80px;height:4px;background:var(--border);border-radius:2px;overflow:hidden;margin-top:3px}
+.score-bar-f{height:100%;border-radius:2px;transition:width 1s ease}
+.header-right{display:flex;align-items:center;gap:6px}
+.time-btn{padding:4px 10px;border:1px solid var(--border);border-radius:4px;background:transparent;color:var(--text3);font-size:10px;font-weight:600;cursor:pointer;transition:all .15s;font-family:inherit}
+.time-btn:hover{border-color:var(--border2);color:var(--text2)}
+.time-btn.active{background:var(--bg3);color:var(--text);border-color:var(--border2)}
+.updated{font-size:9px;color:var(--text4)}
+
+/* Quick Actions */
+.quick-actions{display:flex;gap:6px;padding:10px 20px;border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap;align-items:center}
+.qa-label{font-size:9px;color:var(--text4);text-transform:uppercase;letter-spacing:.7px;font-weight:600;margin-right:4px}
+.qa-btn{display:flex;align-items:center;gap:5px;padding:5px 12px;border-radius:5px;border:1px solid var(--border);background:var(--bg);color:var(--text2);font-size:11px;font-weight:600;cursor:pointer;transition:all .15s;font-family:inherit;text-decoration:none}
+.qa-btn:hover{background:var(--bg3);border-color:var(--border2);color:var(--text)}
+.qa-btn .qa-icon{font-size:13px}
+
+/* Main Layout */
+.main-wrap{display:flex;flex:1;overflow:hidden}
+.feed-col{flex:3;overflow-y:auto;padding:16px 20px}
+.feed-col::-webkit-scrollbar{width:5px}
+.feed-col::-webkit-scrollbar-track{background:transparent}
+.feed-col::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+.ctx-col{flex:2;border-left:1px solid var(--border);overflow-y:auto;padding:16px;background:var(--bg2)}
+.ctx-col::-webkit-scrollbar{width:5px}
+.ctx-col::-webkit-scrollbar-track{background:transparent}
+.ctx-col::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+
+/* Section headers */
+.sec-title{font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+
+/* Feed Cards */
+.f-card{border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:12px;background:var(--bg);transition:border-color .2s}
+.f-card:hover{border-color:var(--border2)}
+.f-card-accent{border-left:3px solid var(--accent-c)}
+.f-tag{display:inline-block;font-size:8px;font-weight:700;letter-spacing:1px;padding:2px 7px;border-radius:3px;text-transform:uppercase;margin-bottom:8px}
+.f-title{font-size:15px;font-weight:700;color:var(--text);line-height:1.35;margin-bottom:6px}
+.f-desc{font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:10px}
+.f-features{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px}
+.f-feat{font-size:9px;padding:2px 7px;border-radius:3px;background:var(--bg3);color:var(--text2);border:1px solid var(--border);font-weight:600}
+.f-roi{font-size:11px;color:var(--text2);line-height:1.5;margin-bottom:12px;padding:8px 10px;background:var(--bg2);border-radius:6px;border-left:2px solid var(--green)}
+.f-roi strong{color:var(--green);font-weight:700}
+.f-actions{display:flex;gap:6px;flex-wrap:wrap}
+.f-btn{display:inline-flex;align-items:center;gap:4px;padding:6px 12px;border-radius:5px;border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:11px;font-weight:600;cursor:pointer;transition:all .15s;font-family:inherit}
+.f-btn:hover{background:var(--bg3);border-color:var(--border2)}
+.f-btn.primary{background:linear-gradient(135deg,var(--red),#E02E1B);border-color:transparent;color:white}
+.f-btn.primary:hover{opacity:.9}
+.f-btn .copy-icon{font-size:12px}
+
+/* Toast */
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(100px);background:var(--bg3);color:var(--text);padding:10px 20px;border-radius:8px;border:1px solid var(--border2);font-size:13px;font-weight:600;z-index:300;transition:transform .3s ease;box-shadow:0 8px 24px rgba(0,0,0,.5)}
+.toast.show{transform:translateX(-50%) translateY(0)}
+
+/* Unlockables */
+.unlock-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:6px}
+.unlock-tile{display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 4px;border-radius:6px;border:1px solid var(--border);background:var(--bg);font-size:8px;color:var(--text4);text-align:center;cursor:pointer;transition:all .2s}
+.unlock-tile:hover{border-color:var(--border2);background:var(--bg3)}
+.unlock-tile.lit{border-color:var(--utc);color:var(--text2)}
+.unlock-tile.lit .u-icon{opacity:1}
+.u-icon{font-size:15px;opacity:.25}
+.u-label{font-weight:600;letter-spacing:.3px;line-height:1.1}
+.unlock-sub{font-size:10px;color:var(--text3);text-align:center;margin-bottom:12px}
+.unlock-sub strong{color:var(--text)}
+
+/* Spend Card */
+.spend-card{border:1px solid var(--border);border-radius:8px;padding:12px;background:var(--bg);margin-bottom:12px}
+.spend-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+.spend-amount{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums}
+.spend-amount.up{color:var(--green)}.spend-amount.down{color:var(--redSoft)}
+.spend-vs{font-size:11px;font-weight:600}
+.spend-metrics{display:flex;gap:12px;margin-bottom:10px}
+.spend-m{display:flex;flex-direction:column}
+.spend-m-label{font-size:8px;color:var(--text4);text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+.spend-m-val{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums}
+.sparkline-wrap{height:40px;position:relative}
+#sparkCanvas{width:100%;height:100%;display:block}
+.ticker-row{display:flex;gap:3px;flex-wrap:wrap;margin-top:8px}
+.tkr{display:flex;align-items:center;gap:3px;padding:2px 6px;border-radius:3px;border:1px solid var(--border);background:transparent;color:var(--text2);font-size:9px;font-weight:600;cursor:pointer;transition:all .15s;font-family:inherit}
+.tkr:hover{border-color:var(--border2)}.tkr .td{width:4px;height:4px;border-radius:50%;flex-shrink:0}
+
+/* Your Data */
+.data-card{border:1px solid var(--border);border-radius:8px;padding:12px;background:var(--bg);margin-bottom:12px}
+.data-stats{display:flex;gap:8px;margin-bottom:8px}
+.data-stat{flex:1;text-align:center;padding:6px;background:var(--bg2);border-radius:5px}
+.data-stat-num{font-size:16px;font-weight:800;color:var(--text)}
+.data-stat-label{font-size:8px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+
+/* What's New */
+.whats-new-item{display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)}
+.whats-new-item:last-child{border-bottom:none}
+.wn-badge{font-size:7px;font-weight:700;padding:2px 5px;border-radius:3px;background:var(--blue);color:white;text-transform:uppercase;letter-spacing:.5px;flex-shrink:0;margin-top:2px}
+.wn-text{font-size:11px;color:var(--text2);line-height:1.4}
+.wn-text a{color:var(--blue);text-decoration:none;cursor:pointer}
+.wn-text a:hover{text-decoration:underline}
+
+/* Prompt Library */
+.prompt-item{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px;background:var(--bg);cursor:pointer;transition:all .15s}
+.prompt-item:hover{background:var(--bg3);border-color:var(--border2)}
+.prompt-name{font-size:11px;font-weight:600;color:var(--text2)}
+.prompt-copy{font-size:9px;color:var(--text3);font-weight:600;padding:2px 6px;border-radius:3px;background:var(--bg2);border:1px solid var(--border)}
+
+.error-msg{color:var(--redSoft);font-size:12px;padding:10px;background:#1A0A0A;border:1px solid #3A1515;border-radius:6px}
+
+@media(max-width:900px){.ctx-col{display:none}.feed-col{flex:1}}
+</style>
+</head>
+<body>
+
+<div class="load-overlay" id="loadOverlay">
+  <div class="load-spinner"></div>
+  <div class="load-title">Mission Control</div>
+  <div class="load-sub">Initializing systems...</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div class="header">
+  <div class="header-left">
+    <div class="mc-logo">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FF3621" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+      Mission Control
+    </div>
+    <div class="live-dot"></div>
+    <span class="updated" id="lastUpdate"></span>
+  </div>
+  <div class="header-center">
+    <div class="score-pill" id="scorePill" onclick="window.open('/','_self')" title="View Health Check details">
+      <div class="score-num" id="scoreNum">--</div>
+      <div class="score-info">
+        <div class="score-tier" id="scoreTier">Loading...</div>
+        <div class="score-bar-w"><div class="score-bar-f" id="scoreBar" style="width:0%"></div></div>
+        <div class="score-sub" id="scoreSub"></div>
+      </div>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="time-toggles" style="display:flex;gap:2px">
+      <button class="time-btn" data-range="1h">1H</button>
+      <button class="time-btn active" data-range="1d">1D</button>
+      <button class="time-btn" data-range="7d">7D</button>
+      <button class="time-btn" data-range="30d">30D</button>
+    </div>
+  </div>
+</div>
+
+<div class="quick-actions">
+  <span class="qa-label">Quick Start</span>
+  <a class="qa-btn" href="/#/workspace" target="_blank"><span class="qa-icon">+</span> Notebook</a>
+  <a class="qa-btn" href="/#/joblist" target="_blank"><span class="qa-icon">+</span> Pipeline</a>
+  <a class="qa-btn" href="/#/sql/dashboards" target="_blank"><span class="qa-icon">+</span> Dashboard</a>
+  <a class="qa-btn" href="/#/sql/genie" target="_blank"><span class="qa-icon">+</span> Genie Space</a>
+  <a class="qa-btn" href="/#/explore/data" target="_blank"><span class="qa-icon">&#128450;</span> Catalog</a>
+</div>
+
+<div class="main-wrap">
+  <!-- FEED (main) -->
+  <div class="feed-col" id="feedCol"></div>
+
+  <!-- CONTEXT PANEL (compact) -->
+  <div class="ctx-col" id="ctxCol"></div>
+</div>
+
+<script>
+var chartData = {timeseries:[],yesterday:[],skus:[],sku_ts:{}};
+var currentRange = '1d';
+var healthScore = null;
+
+var TICKERS = {
+  'All-Purpose Compute':{sym:'APC',color:'#FF3621'},
+  'Jobs Compute':{sym:'JOBS',color:'#1B96FF'},
+  'SQL Warehouse':{sym:'SQL',color:'#F2A900'},
+  'Serverless':{sym:'SRVLS',color:'#00B8A9'},
+  'Delta Live Tables':{sym:'SDP',color:'#8B5CF6'},
+  'Model Serving':{sym:'SERVE',color:'#FF6584'},
+  'Other':{sym:'OTHER',color:'#64748B'}
+};
+
+var UNLOCKS = [
+  {id:'etl',label:'ETL',icon:'\u2699\uFE0F',skus:['Jobs Compute','All-Purpose Compute'],color:'#1B96FF'},
+  {id:'sql',label:'SQL',icon:'\uD83D\uDD0D',skus:['SQL Warehouse'],color:'#F2A900'},
+  {id:'stream',label:'Streaming',icon:'\u26A1',skus:['Delta Live Tables'],color:'#8B5CF6'},
+  {id:'ml',label:'ML / AI',icon:'\uD83E\uDDE0',skus:['Model Serving'],color:'#FF6584'},
+  {id:'govern',label:'Govern',icon:'\uD83D\uDD12',skus:[],color:'#00B8A9',alwaysLit:true},
+  {id:'serverless',label:'Serverless',icon:'\u2601\uFE0F',skus:['Serverless'],color:'#00E676'},
+  {id:'apps',label:'Apps',icon:'\uD83D\uDCF1',skus:[],color:'#FF3621',alwaysLit:true},
+  {id:'cost',label:'Cost Intel',icon:'\uD83D\uDCC8',skus:[],color:'#F2A900',alwaysLit:true}
+];
+
+// ── USE CASE PROMPTS (Genie Code ready) ──
+var USE_CASES = [
+  {
+    title:'Build a Customer 360 View',
+    desc:'Unify customer data from multiple sources into a single, comprehensive profile. Combine transactions, interactions, and demographics for a complete picture that powers personalization, segmentation, and retention strategies.',
+    features:['Delta Lake','Unity Catalog','SQL Analytics','Dashboards'],
+    roi:'Enables personalized customer experiences, reduces churn by surfacing at-risk accounts early, and gives every team a single source of truth for customer data.',
+    prompt:'Help me build a Customer 360 pipeline. I want to: 1) Create a notebook that ingests and unifies customer data from multiple tables in my catalog into a single gold-layer customer profile table using Delta Lake, 2) Add data quality checks for completeness and freshness, 3) Build a SQL dashboard showing customer segments, lifetime value distribution, and engagement trends, 4) Schedule the pipeline to run daily as a Databricks Job.',
+    accent:'#1B96FF',
+    tag:'Use Case'
+  },
+  {
+    title:'Deploy a Predictive ML Model',
+    desc:'Go from raw data to a production ML endpoint in one workflow. Use AutoML to find the best model, track experiments in MLflow, and deploy as a scalable REST API that your applications can call in real-time.',
+    features:['AutoML','MLflow','Model Serving','Feature Store'],
+    roi:'Turns data into live predictions your apps and teams can act on immediately. Reduces time-to-production from months to hours and creates a repeatable ML workflow.',
+    prompt:'Help me deploy a predictive ML model end-to-end. I want to: 1) Create a feature engineering notebook that prepares training features from my existing tables, 2) Train a model using Databricks AutoML and log the experiment to MLflow, 3) Register the best model in the Model Registry, 4) Deploy it as a Model Serving endpoint with auto-scaling, 5) Create a simple notebook that calls the endpoint and displays predictions.',
+    accent:'#FF6584',
+    tag:'Use Case'
+  },
+  {
+    title:'Set Up Real-Time Streaming Analytics',
+    desc:'Process data as it arrives instead of waiting for batch jobs. Build a streaming pipeline that continuously ingests, transforms, and serves fresh data to dashboards and downstream systems.',
+    features:['Structured Streaming','Declarative Pipelines','Auto Loader','Delta Lake'],
+    roi:'Moves your analytics from hours-old to seconds-old. Critical for operational dashboards, monitoring, alerting, and any workflow where stale data means missed opportunities.',
+    prompt:'Help me build a real-time streaming analytics pipeline. I want to: 1) Set up Auto Loader to incrementally ingest new files as they land in cloud storage, 2) Create a Databricks Declarative Pipeline (DLT) with bronze/silver/gold layers and data quality expectations, 3) Build a live dashboard that auto-refreshes from the gold tables, 4) Configure the pipeline to run continuously with auto-scaling.',
+    accent:'#8B5CF6',
+    tag:'Use Case'
+  }
+];
+
+// ── PRO TIPS with prompts ──
+var PRO_TIPS = [
+  {
+    title:'Automate Your Data Ingestion',
+    desc:'Stop writing manual file-loading scripts. Auto Loader incrementally processes new files as they arrive with exactly-once guarantees.',
+    prompt:'Help me set up Auto Loader to incrementally ingest CSV/JSON/Parquet files from my cloud storage into Delta tables. Include schema inference, schema evolution handling, and a checkpoint so it only processes new files. Set it up as a scheduled job.',
+    accent:'#00B8A9',
+    tag:'Pro Tip'
+  },
+  {
+    title:'Add AI to Your SQL Queries',
+    desc:'Use AI Functions like ai_query, ai_classify, and ai_summarize directly in SQL. Enrich your data with LLM intelligence without writing Python.',
+    prompt:'Show me how to use Databricks AI Functions in SQL. I want examples of: 1) ai_query to ask questions about my data in natural language, 2) ai_classify to categorize text columns, 3) ai_summarize to generate summaries. Use my actual tables from the catalog.',
+    accent:'#F2A900',
+    tag:'Pro Tip'
+  }
+];
+
+// ── PROMPT LIBRARY ──
+var PROMPT_LIB = [
+  {name:'ETL pipeline from CSV to Delta', prompt:'Help me build an ETL pipeline that reads CSV files from cloud storage, cleans and transforms the data, and writes it to Delta Lake tables with partitioning and Z-ordering for query performance. Include error handling and logging.'},
+  {name:'Create a Genie Space for my data', prompt:'Help me create a Genie Space that connects to my most important tables. Add clear descriptions, sample questions, and business context so anyone on my team can ask questions in natural language.'},
+  {name:'Set up a scheduled data quality job', prompt:'Help me create a data quality monitoring job that runs daily, checks my key tables for completeness, freshness, null rates, and schema drift, and sends an alert if any checks fail.'}
+];
+
+// ── FETCH DATA ──
+function fetchCostData(range) {
+  fetch('/api/cost-stream?range=' + (range || currentRange))
+    .then(function(r){ if(!r.ok) return r.json().catch(function(){return {};}).then(function(e){throw new Error(e.error||'HTTP '+r.status);}); return r.json(); })
+    .then(function(data){
+      if(data.error) throw new Error(data.error);
+      chartData = data;
+      document.getElementById('loadOverlay').classList.add('hidden');
+      document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+      renderAll();
+    })
+    .catch(function(e){
+      document.getElementById('loadOverlay').innerHTML = '<div class="error-msg" style="max-width:420px;text-align:center;padding:16px">' + e.message + '<br><br><button onclick="location.reload()" style="padding:6px 16px;border-radius:4px;border:1px solid #334155;background:#1E293B;color:#E2E8F0;cursor:pointer;font-family:inherit;font-weight:600">Retry</button></div>';
+    });
+}
+
+function fetchHealthScore() {
+  fetch('/api/health-check/results')
+    .then(function(r){ return r.json(); })
+    .then(function(data){
+      if(data && data.overall_score !== undefined) {
+        healthScore = Math.round(data.overall_score);
+      }
+      renderScore();
+    })
+    .catch(function(){ renderScore(); });
+}
+
+// ── SCORE ──
+function renderScore() {
+  var score = healthScore;
+  var el = document.getElementById('scoreNum');
+  var tier = document.getElementById('scoreTier');
+  var bar = document.getElementById('scoreBar');
+  var sub = document.getElementById('scoreSub');
+
+  if(score === null) {
+    // Estimate from cost data
+    var cats = (chartData.skus||[]).filter(function(s){return s.cost>0;}).length;
+    score = Math.min(40 + cats * 8, 85);
+  }
+
+  var tierName, tierClass, barColor, nextTier, needed;
+  if(score >= 100){ tierName='CHAMPION'; tierClass='champion'; barColor='var(--purple)'; nextTier=null; needed=0; }
+  else if(score >= 85){ tierName='GOLD'; tierClass='gold'; barColor='var(--goldT)'; nextTier='Champion'; needed=100-score; }
+  else if(score >= 70){ tierName='SILVER'; tierClass='silver'; barColor='var(--silver)'; nextTier='Gold'; needed=85-score; }
+  else if(score >= 55){ tierName='BRONZE'; tierClass='bronze'; barColor='var(--bronze)'; nextTier='Silver'; needed=70-score; }
+  else { tierName='LOCKED'; tierClass=''; barColor='var(--text4)'; nextTier='Bronze'; needed=55-score; }
+
+  el.textContent = score;
+  el.className = 'score-num ' + tierClass;
+  tier.textContent = tierName;
+  tier.className = 'score-tier ' + tierClass;
+  bar.style.width = score + '%';
+  bar.style.background = barColor;
+  sub.textContent = nextTier ? '+' + needed + ' to ' + nextTier : 'Perfect score!';
+}
+
+// ── RENDER ALL ──
+function renderAll() {
+  renderScore();
+  renderFeed();
+  renderContext();
+}
+
+// ── FEED (left column) ──
+function renderFeed() {
+  var h = '';
+  var d = chartData;
+  var usedCats = {};
+  (d.skus||[]).forEach(function(s){if(s.cost>0) usedCats[s.category]=true;});
+
+  // Challenge card
+  h += '<div class="f-card f-card-accent" style="--accent-c:var(--purple);border-color:rgba(139,92,246,.2);background:linear-gradient(135deg,rgba(139,92,246,.04),var(--bg))">';
+  h += '<div class="f-tag" style="background:var(--purple);color:white">Weekly Challenge</div>';
+  h += '<div class="f-title">\uD83C\uDFC6 Create a Genie Space for Your Team</div>';
+  h += '<div class="f-desc">Let anyone on your team ask questions about your data in natural language. Pick your top 3 tables and Genie handles the rest.</div>';
+  h += '<div class="f-actions"><button class="f-btn primary" onclick="copyPrompt(\'Help me create a Genie Space that connects to my most important tables. Add clear descriptions, sample questions, and business context so anyone on my team can ask questions in natural language.\')">Copy Prompt for Genie Code</button></div>';
+  h += '</div>';
+
+  // Use Case cards (2-3)
+  h += '<div class="sec-title" style="margin-top:8px">\uD83D\uDE80 Suggested Use Cases</div>';
+  USE_CASES.forEach(function(uc) {
+    h += '<div class="f-card f-card-accent" style="--accent-c:'+uc.accent+'">';
+    h += '<div class="f-tag" style="background:'+uc.accent+';color:white">'+uc.tag+'</div>';
+    h += '<div class="f-title">'+uc.title+'</div>';
+    h += '<div class="f-desc">'+uc.desc+'</div>';
+    h += '<div class="f-features">';
+    uc.features.forEach(function(f){ h += '<span class="f-feat">'+f+'</span>'; });
+    h += '</div>';
+    h += '<div class="f-roi"><strong>Why it matters:</strong> '+uc.roi+'</div>';
+    h += '<div class="f-actions"><button class="f-btn primary" onclick="copyPrompt(USE_CASES['+USE_CASES.indexOf(uc)+'].prompt)">\uD83D\uDCCB Copy Prompt for Genie Code</button></div>';
+    h += '</div>';
+  });
+
+  // Pro Tips
+  h += '<div class="sec-title" style="margin-top:8px">\u26A1 Pro Tips</div>';
+  PRO_TIPS.forEach(function(tip, i) {
+    h += '<div class="f-card f-card-accent" style="--accent-c:'+tip.accent+'">';
+    h += '<div class="f-tag" style="background:'+tip.accent+';color:white">'+tip.tag+'</div>';
+    h += '<div class="f-title">'+tip.title+'</div>';
+    h += '<div class="f-desc">'+tip.desc+'</div>';
+    h += '<div class="f-actions"><button class="f-btn primary" onclick="copyPrompt(PRO_TIPS['+i+'].prompt)">\uD83D\uDCCB Copy Prompt</button></div>';
+    h += '</div>';
+  });
+
+  // Prompt Library
+  h += '<div class="sec-title" style="margin-top:8px">\uD83D\uDCDA Prompt Library</div>';
+  PROMPT_LIB.forEach(function(p, i) {
+    h += '<div class="prompt-item" onclick="copyPrompt(PROMPT_LIB['+i+'].prompt)">';
+    h += '<span class="prompt-name">'+p.name+'</span>';
+    h += '<span class="prompt-copy">\uD83D\uDCCB Copy</span>';
+    h += '</div>';
+  });
+
+  document.getElementById('feedCol').innerHTML = h;
+}
+
+// ── CONTEXT PANEL (right) ──
+function renderContext() {
+  var h = '';
+  var d = chartData;
+
+  // Spend Card with sparkline
+  h += '<div class="sec-title">\uD83D\uDCB0 Spend Overview</div>';
+  h += '<div class="spend-card">';
+  h += '<div class="spend-top">';
+  var cls = d.total_cost > d.yesterday_total ? 'up' : d.total_cost < d.yesterday_total ? 'down' : '';
+  h += '<div class="spend-amount '+cls+'">$'+Math.round(d.total_cost||0).toLocaleString()+'</div>';
+  var diff = (d.total_cost||0) - (d.yesterday_total||0);
+  var pct = d.yesterday_total > 0 ? ((diff/d.yesterday_total)*100).toFixed(1) : '0';
+  var arrow = diff >= 0 ? '\u2191' : '\u2193';
+  var vcls = diff >= 0 ? 'arrow-up' : 'arrow-down';
+  h += '<div class="spend-vs"><span class="'+vcls+'">'+arrow+' '+pct+'%</span> vs yesterday</div>';
+  h += '</div>';
+  h += '<div class="spend-metrics">';
+  h += '<div class="spend-m"><div class="spend-m-label">Burn Rate</div><div class="spend-m-val">$'+(d.burn_rate_per_min||0).toFixed(2)+'/min</div></div>';
+  h += '<div class="spend-m"><div class="spend-m-label">Projected</div><div class="spend-m-val">$'+Math.round(d.projected_daily||0).toLocaleString()+'</div></div>';
+  h += '<div class="spend-m"><div class="spend-m-label">Data Points</div><div class="spend-m-val">'+(d.data_points||0)+'</div></div>';
+  h += '</div>';
+  h += '<div class="sparkline-wrap"><canvas id="sparkCanvas"></canvas></div>';
+  // Tickers
+  h += '<div class="ticker-row">';
+  if(d.skus) d.skus.forEach(function(s){
+    var t = TICKERS[s.category]||{sym:s.category.substring(0,3),color:'#64748B'};
+    h += '<span class="tkr"><span class="td" style="background:'+t.color+'"></span>'+t.sym+' $'+fmtK(s.cost)+'</span>';
+  });
+  h += '</div></div>';
+
+  // Unlockables
+  h += '<div class="sec-title">\uD83D\uDD13 Capabilities</div>';
+  var usedCats = {};
+  (d.skus||[]).forEach(function(s){if(s.cost>0) usedCats[s.category]=true;});
+  var litCount = 0;
+  h += '<div class="unlock-grid">';
+  UNLOCKS.forEach(function(u){
+    var lit = u.alwaysLit || false;
+    if(!lit) u.skus.forEach(function(s){if(usedCats[s]) lit=true;});
+    if(lit) litCount++;
+    h += '<div class="unlock-tile'+(lit?' lit':'')+'" style="--utc:'+u.color+'" title="'+(lit?u.label+' - Active':u.label+' - Not yet active. Click for suggestions.')+'">';
+    h += '<div class="u-icon">'+u.icon+'</div>';
+    h += '<div class="u-label">'+u.label+'</div></div>';
+  });
+  h += '</div>';
+  h += '<div class="unlock-sub"><strong>'+litCount+'/'+UNLOCKS.length+'</strong> active</div>';
+
+  // Your Data
+  h += '<div class="sec-title">\uD83D\uDDC3\uFE0F Your Data</div>';
+  h += '<div class="data-card">';
+  h += '<div class="data-stats">';
+  h += '<div class="data-stat"><div class="data-stat-num" id="tblCount">--</div><div class="data-stat-label">Tables</div></div>';
+  h += '<div class="data-stat"><div class="data-stat-num" id="schCount">--</div><div class="data-stat-label">Schemas</div></div>';
+  h += '<div class="data-stat"><div class="data-stat-num" id="catCount">--</div><div class="data-stat-label">Catalogs</div></div>';
+  h += '</div>';
+  h += '<a class="qa-btn" href="/#/explore/data" target="_blank" style="width:100%;justify-content:center;margin-top:6px">Browse Catalog \u2192</a>';
+  h += '</div>';
+
+  // What's New
+  h += '<div class="sec-title">\u2728 What\'s New on Databricks</div>';
+  h += '<div class="whats-new-item"><span class="wn-badge">New</span><div class="wn-text">AI Functions now support document and image analysis with <a onclick="copyPrompt(\'Show me how to use ai_parse_document and ai_extract to analyze PDFs and images stored in Unity Catalog volumes.\')">ai_parse_document</a></div></div>';
+  h += '<div class="whats-new-item"><span class="wn-badge">New</span><div class="wn-text">Genie Spaces support <a onclick="copyPrompt(\'Help me create a Genie Space with custom instructions that define our business metrics and KPI definitions.\')">custom instructions</a> for business context</div></div>';
+  h += '<div class="whats-new-item"><span class="wn-badge">GA</span><div class="wn-text">Serverless Jobs now generally available \u2014 <a onclick="copyPrompt(\'Help me convert my existing scheduled jobs to use Serverless compute for faster startup and auto-scaling.\')">try it</a></div></div>';
+
+  document.getElementById('ctxCol').innerHTML = h;
+
+  // Draw sparkline after DOM update
+  setTimeout(drawSparkline, 50);
+}
+
+// ── SPARKLINE ──
+function drawSparkline() {
+  var canvas = document.getElementById('sparkCanvas');
+  if(!canvas) return;
+  var rect = canvas.parentElement.getBoundingClientRect();
+  if(rect.width < 10) return;
+  var dpr = window.devicePixelRatio||1;
+  canvas.width = rect.width*dpr; canvas.height = rect.height*dpr;
+  canvas.style.width = rect.width+'px'; canvas.style.height = rect.height+'px';
+  var ctx = canvas.getContext('2d'); ctx.scale(dpr,dpr);
+  var W = rect.width, H = rect.height;
+  var ts = chartData.timeseries||[];
+  if(ts.length < 2) return;
+  var cumul=[],sum=0; ts.forEach(function(p){sum+=p.cost;cumul.push(sum);});
+  var maxY = cumul[cumul.length-1]*1.1||100;
+  // Fill
+  ctx.beginPath();
+  cumul.forEach(function(v,i){
+    var x = (i/(cumul.length-1))*W;
+    var y = H-(v/maxY)*H;
+    i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+  });
+  ctx.lineTo(W,H);ctx.lineTo(0,H);ctx.closePath();
+  var gr = ctx.createLinearGradient(0,0,0,H);
+  gr.addColorStop(0,'rgba(0,230,118,.12)');gr.addColorStop(1,'rgba(0,230,118,0)');
+  ctx.fillStyle=gr;ctx.fill();
+  // Line
+  ctx.beginPath();ctx.strokeStyle='#00E676';ctx.lineWidth=1.5;ctx.lineJoin='round';
+  cumul.forEach(function(v,i){
+    var x=(i/(cumul.length-1))*W;var y=H-(v/maxY)*H;
+    i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+}
+
+// ── COPY PROMPT ──
+function copyPrompt(text) {
+  if(navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function(){showToast('\uD83D\uDCCB Prompt copied! Paste into Genie Code to build.');}).catch(function(){fallbackCopy(text);});
+  } else { fallbackCopy(text); }
+}
+function fallbackCopy(text) {
+  var ta = document.createElement('textarea'); ta.value = text;
+  ta.style.position='fixed'; ta.style.left='-9999px';
+  document.body.appendChild(ta); ta.select();
+  try{document.execCommand('copy');showToast('\uD83D\uDCCB Prompt copied! Paste into Genie Code.');}catch(e){showToast('Could not copy. Select and copy manually.');}
+  document.body.removeChild(ta);
+}
+function showToast(msg) {
+  var t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(function(){t.classList.remove('show');}, 3000);
+}
+
+// ── HELPERS ──
+function fmtK(v){if(v>=1e6)return(v/1e6).toFixed(1)+'M';if(v>=1e3)return(v/1e3).toFixed(0)+'K';return Math.round(v).toString();}
+
+// ── TIME TOGGLES ──
+document.querySelectorAll('.time-btn').forEach(function(btn){
+  btn.addEventListener('click',function(){
+    document.querySelectorAll('.time-btn').forEach(function(b){b.classList.remove('active');});
+    btn.classList.add('active');currentRange=btn.dataset.range;
+    document.getElementById('loadOverlay').classList.remove('hidden');
+    document.getElementById('loadOverlay').innerHTML='<div class="load-spinner"></div><div class="load-title">Mission Control</div><div class="load-sub">Loading '+currentRange.toUpperCase()+' data...</div>';
+    fetchCostData(currentRange);
+  });
+});
+
+// ── RESIZE ──
+window.addEventListener('resize',function(){drawSparkline();});
+
+// ── INIT ──
+fetchCostData('1d');
+fetchHealthScore();
+setInterval(function(){fetchCostData(currentRange);},60000);
+</script>
+</body>
+</html>

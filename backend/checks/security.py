@@ -245,33 +245,35 @@ class SecurityCheckRunner(BaseCheckRunner):
         except Exception:
             mask_count = 0
 
-        if total_classified == 0:
-            return CheckResult("5.4.1", "PII/sensitive data detection",
-                "Data Protection & PII", 100, "pass",
-                "No PII/sensitive data classified", "All PII columns masked",
-                details={"non_conforming": [], "summary": "No sensitive data classifications found."})
-
-        # PII exists — are there masks?
-        if mask_count > 0 and mask_count >= total_classified * 0.5:
-            score, status = 50, "partial"
-        else:
-            score, status = 0, "fail"
-
         class_summary = [{"classification": s.get("class_tag",""), "tables": s.get("tables",0),
                          "columns": s.get("columns",0)} for s in stats[:10]]
 
-        rec = Recommendation(
-            action=f"{total_classified} PII columns found across {total_tables} tables with {mask_count} column masks applied. Apply column masks to protect sensitive data.",
-            impact="Unmasked PII columns expose sensitive data to all users with table access. Column masks enforce data protection at query time.",
-            priority="high",
-            docs_url="https://docs.databricks.com/en/data-governance/unity-catalog/column-masks.html")
+        if total_classified == 0:
+            return CheckResult("5.4.1", "PII/sensitive data detection",
+                "Data Protection & PII", 100, "pass",
+                "No PII/sensitive data classified", "Data classification enabled",
+                details={"non_conforming": [], "summary": "No sensitive data classifications found."})
+
+        # PII exists — data classification is working. Score on detection coverage, not masking.
+        # Masking is handled by check 5.6.2.
+        score, status = 100, "pass"
+
+        nc_display = [{"catalog": r.get("catalog_name",""), "schema": r.get("schema_name",""),
+               "table": r.get("table_name",""), "column": r.get("column_name",""),
+               "classification": r.get("class_tag",""), "confidence": r.get("confidence",""),
+               "status": "Detected — see PII masking check for protection status"
+              } for r in rows[:20]]
 
         return CheckResult("5.4.1", "PII/sensitive data detection",
             "Data Protection & PII", score, status,
-            f"{total_classified} PII columns in {total_tables} tables, {mask_count} masks applied",
-            "All PII columns masked",
-            details={"non_conforming": nc, "classification_summary": class_summary},
-            recommendation=rec)
+            f"Data classification active: {total_classified} PII columns detected across {total_tables} tables",
+            "Data classification enabled",
+            details={"non_conforming": nc_display, "classification_summary": class_summary},
+            recommendation=Recommendation(
+                action=f"Data classification is active and detecting {total_classified} sensitive columns. See 'PII columns without masking' check for protection status.",
+                impact="Having data classification enabled is the critical first step to PII protection.",
+                priority="low",
+                docs_url="https://docs.databricks.com/en/data-governance/unity-catalog/data-classification.html"))
 
     def check_5_4_2_row_level_security(self) -> CheckResult:
         """Check row-level security (row filter) adoption."""

@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 110 165" width="220" height="330">
+  <defs>
+    <linearGradient id="bg_data_engineering_bronze" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1D2D4A"/>
+      <stop offset="100%" stop-color="#0F1B2D"/>
+    </linearGradient>
+    <linearGradient id="band_data_engineering_bronze" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#E85555"/>
+      <stop offset="50%" stop-color="#FF6B6B"/>
+      <stop offset="100%" stop-color="#E85555"/>
+    </linearGradient>
+    <clipPath id="clip_data_engineering_bronze">
+      <path d="M12,0 L98,0 C104,0 110,6 110,12 L110,110 L55,155 L0,110 L0,12 C0,6 6,0 12,0Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- Shield body -->
+  <path d="M12,0 L98,0 C104,0 110,6 110,12 L110,110 L55,155 L0,110 L0,12 C0,6 6,0 12,0Z" fill="url(#bg_data_engineering_bronze)" stroke="#0A1525" stroke-width="1.5"/>
+  
+  <!-- Inner border -->
+  <path d="M16,4 L94,4 C99,4 106,10 106,15 L106,108 L55,149 L4,108 L4,15 C4,10 11,4 16,4Z" fill="none" stroke="#FF6B6B" stroke-width="0.5" opacity="0.15"/>
+
+  <!-- Header stripe -->
+  <rect x="0" y="0" width="110" height="34" rx="12" fill="#2A3A52" clip-path="url(#clip_data_engineering_bronze)"/>
+  <line x1="0" y1="34" x2="110" y2="34" stroke="#FF6B6B" stroke-width="0.3" opacity="0.2"/>
+
+  <!-- Stars -->
+  <polygon points="55.0,16.5 53.6,20.1 49.8,20.3 52.8,22.7 51.8,26.4 55.0,24.3 58.2,26.4 57.2,22.7 60.2,20.3 56.4,20.1" fill="#CD7F32"/>
+
+  <!-- Corner blocks -->
+  
+    <rect x="12" y="34" width="5" height="5" rx="1" fill="#FF6B6B" opacity="0.15"/>
+    <rect x="93" y="34" width="5" height="5" rx="1" fill="#FF6B6B" opacity="0.15"/>
+    <rect x="12" y="42" width="5" height="5" rx="1" fill="#FF6B6B" opacity="0.08"/>
+    <rect x="93" y="42" width="5" height="5" rx="1" fill="#FF6B6B" opacity="0.08"/>
+
+  <!-- Category band -->
+  <rect x="8" y="52" width="94" height="32" rx="3" fill="url(#band_data_engineering_bronze)" opacity="0.9"/>
+  <rect x="8" y="52" width="94" height="32" rx="3" fill="none" stroke="white" stroke-width="0.3" opacity="0.15"/>
+  <text x="55" y="66" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="9.5" font-weight="800" fill="white" letter-spacing="1.2">DATA</text>
+    <text x="55" y="78" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="9.5" font-weight="800" fill="white" letter-spacing="1.2">ENGINEERING</text>
+
+  <!-- Semicircle accents -->
+  <path d="M15,68 A4,4 0 0,1 15,76" fill="#FF6B6B" opacity="0.2"/>
+    <path d="M95,68 A4,4 0 0,0 95,76" fill="#FF6B6B" opacity="0.2"/>
+
+  <!-- Wavy separator -->
+  <path d="M18,87 Q36,83 55,87 Q74,91 92,87" fill="none" stroke="#FF6B6B" stroke-width="0.8" opacity="0.2"/>
+
+  <!-- Geometric section -->
+  
+      <path d="M25,94 L55,84 L85,94" fill="none" stroke="#FF6B6B" stroke-width="1.5" opacity="0.4"/>
+      <path d="M25,100 L55,90 L85,100" fill="none" stroke="#FF6B6B" stroke-width="1.2" opacity="0.3"/>
+      <path d="M25,106 L55,96 L85,106" fill="none" stroke="#FF6B6B" stroke-width="0.8" opacity="0.2"/>
+      <rect x="38" y="110" width="34" height="3" rx="1.5" fill="#FF6B6B" opacity="0.15"/>
+      <circle cx="38" cy="98" r="2.5" fill="#FF6B6B" opacity="0.25"/>
+      <circle cx="72" cy="98" r="2.5" fill="#FF6B6B" opacity="0.25"/>
+      <circle cx="55" cy="86" r="3" fill="#FF6B6B" opacity="0.3"/>
+
+  <!-- Tier label -->
+  <text x="55" y="138" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="8.5" font-weight="700" fill="#8899AA" letter-spacing="3" opacity="0.7">BRONZE</text>
+
+  <!-- Bottom point accent -->
+  <circle cx="55" cy="145" r="2" fill="#FF6B6B" opacity="0.25"/>
+</svg>

@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Live Cost Monitor | Databricks Health Check</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0A0E17;color:#E2E8F0;overflow-x:hidden;height:100vh;display:flex;flex-direction:column}
+
+/* ── Loading Overlay ── */
+.load-overlay{position:fixed;inset:0;background:#0A0E17;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:100;transition:opacity .4s}
+.load-overlay.hidden{opacity:0;pointer-events:none}
+.load-spinner{width:40px;height:40px;border:3px solid #1E293B;border-top-color:#FF3621;border-radius:50%;animation:spin .8s linear infinite}
+.load-text{margin-top:16px;color:#64748B;font-size:14px;font-weight:500}
+.load-sub{margin-top:6px;color:#334155;font-size:12px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── Header ── */
+.header{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;border-bottom:1px solid #1E293B;flex-shrink:0}
+.header-left{display:flex;align-items:center;gap:10px}
+.logo{font-size:15px;font-weight:700;color:#E2E8F0;display:flex;align-items:center;gap:6px}
+.beta{font-size:8px;font-weight:700;letter-spacing:1.5px;padding:2px 6px;border-radius:3px;background:#FF3621;color:white}
+.status-dot{width:7px;height:7px;border-radius:50%;background:#00E676;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(0,230,118,0.4)}50%{box-shadow:0 0 0 6px rgba(0,230,118,0)}}
+.header-right{display:flex;align-items:center;gap:8px}
+.time-toggles{display:flex;gap:2px}
+.time-btn{padding:5px 12px;border:1px solid #1E293B;border-radius:5px;background:transparent;color:#64748B;font-size:11px;font-weight:600;cursor:pointer;transition:all .15s}
+.time-btn:hover{border-color:#334155;color:#94A3B8}
+.time-btn.active{background:#1E293B;color:#E2E8F0;border-color:#334155}
+.updated-text{font-size:10px;color:#475569}
+
+/* ── Metrics Row ── */
+.metrics{display:flex;align-items:baseline;gap:20px;padding:16px 20px 10px;flex-shrink:0;flex-wrap:wrap}
+.big-number{font-size:40px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-1px;transition:color .3s}
+.big-number.up{color:#00E676}.big-number.down{color:#FF5252}.big-number.flat{color:#E2E8F0}
+.metric-card{display:flex;flex-direction:column;gap:1px}
+.metric-label{font-size:10px;color:#64748B;text-transform:uppercase;letter-spacing:.8px;font-weight:600}
+.metric-value{font-size:17px;font-weight:700;font-variant-numeric:tabular-nums}
+.metric-sub{font-size:11px;color:#64748B}
+.arrow-up{color:#00E676}.arrow-down{color:#FF5252}
+
+/* ── Ticker Strip ── */
+.ticker-strip{display:flex;gap:6px;padding:6px 20px 10px;flex-shrink:0;flex-wrap:wrap;align-items:center}
+.ticker-label{font-size:10px;color:#475569;text-transform:uppercase;letter-spacing:.8px;font-weight:600;margin-right:4px}
+.ticker{display:flex;align-items:center;gap:5px;padding:4px 10px;border-radius:4px;border:1px solid #1E293B;background:transparent;color:#94A3B8;font-size:11px;font-weight:600;cursor:pointer;transition:all .15s;font-family:inherit;white-space:nowrap}
+.ticker:hover{border-color:#334155;background:#0F1520}
+.ticker.active{border-color:var(--tc);background:var(--tc-bg);color:var(--tc)}
+.ticker .t-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.ticker .t-sym{font-weight:700;font-size:10px;letter-spacing:.5px}
+.ticker .t-cost{font-variant-numeric:tabular-nums;font-size:11px}
+
+/* ── Chart ── */
+.chart-wrap{flex:1;position:relative;padding:0 20px 8px;min-height:200px}
+.chart-container{position:relative;width:100%;height:100%}
+#costChart{width:100%;height:100%;display:block;cursor:crosshair}
+.tooltip{position:absolute;background:#1E293B;border:1px solid #334155;border-radius:6px;padding:6px 10px;font-size:11px;pointer-events:none;z-index:10;display:none;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,.4)}
+.tooltip .tt-time{color:#94A3B8;font-size:10px}
+.tooltip .tt-cost{color:#E2E8F0;font-size:14px;font-weight:700}
+.tooltip .tt-cat{color:#64748B;font-size:10px;margin-top:2px}
+.crosshair{position:absolute;top:0;bottom:0;width:1px;background:#334155;pointer-events:none;display:none}
+
+/* ── Footer ── */
+.footer-bar{display:flex;align-items:center;gap:16px;padding:8px 20px;border-top:1px solid #1E293B;font-size:11px;color:#475569;flex-shrink:0}
+.legend{display:flex;align-items:center;gap:5px}
+.legend-line{width:14px;height:2px;border-radius:1px}
+
+/* ── Error ── */
+.error-msg{color:#FF5252;font-size:13px;padding:8px 12px;background:#1A0A0A;border:1px solid #3A1515;border-radius:6px}
+
+@media(max-width:768px){.metrics{gap:12px}.big-number{font-size:28px}}
+</style>
+</head>
+<body>
+
+<!-- Loading Overlay -->
+<div class="load-overlay" id="loadOverlay">
+  <div class="load-spinner"></div>
+  <div class="load-text">Loading cost data...</div>
+  <div class="load-sub">Querying billing tables (5-15s)</div>
+</div>
+
+<!-- Header -->
+<div class="header">
+  <div class="header-left">
+    <div class="logo">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FF3621" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+      Live Cost Monitor <span class="beta">BETA</span>
+    </div>
+    <div class="status-dot" title="Live"></div>
+    <span class="updated-text" id="lastUpdate"></span>
+  </div>
+  <div class="header-right">
+    <div class="time-toggles">
+      <button class="time-btn" data-range="1h">1H</button>
+      <button class="time-btn active" data-range="1d">1D</button>
+      <button class="time-btn" data-range="7d">7D</button>
+      <button class="time-btn" data-range="30d">30D</button>
+    </div>
+  </div>
+</div>
+
+<!-- Metrics -->
+<div class="metrics">
+  <div>
+    <div class="metric-label">Total Spend</div>
+    <div class="big-number flat" id="bigNumber">—</div>
+  </div>
+  <div class="metric-card">
+    <div class="metric-label">Burn Rate</div>
+    <div class="metric-value" id="burnRate">—</div>
+  </div>
+  <div class="metric-card">
+    <div class="metric-label">Projected Daily</div>
+    <div class="metric-value" id="projected">—</div>
+  </div>
+  <div class="metric-card">
+    <div class="metric-label">vs Yesterday</div>
+    <div class="metric-value" id="vsYesterday">—</div>
+  </div>
+</div>
+
+<!-- Ticker Strip -->
+<div class="ticker-strip" id="tickerStrip">
+  <span class="ticker-label">Filter</span>
+</div>
+
+<!-- Chart -->
+<div class="chart-wrap">
+  <div class="chart-container" id="chartContainer">
+    <canvas id="costChart"></canvas>
+    <div class="crosshair" id="crosshair"></div>
+    <div class="tooltip" id="tooltip"><div class="tt-time"></div><div class="tt-cost"></div><div class="tt-cat"></div></div>
+  </div>
+</div>
+
+<!-- Footer -->
+<div class="footer-bar">
+  <div class="legend"><div class="legend-line" style="background:#00E676"></div>Today</div>
+  <div class="legend"><div class="legend-line" style="background:#334155;border:1px dashed #64748B"></div>Yesterday</div>
+  <span id="dataPoints" style="margin-left:auto"></span>
+</div>
+
+<script>
+var chartData = {timeseries:[],yesterday:[],skus:[]};
+var currentRange = '1d';
+var activeTicker = null;
+var animTarget = 0;
+var animCurrent = 0;
+var pollTimer = null;
+
+// ── TICKER CONFIG ──
+var TICKERS = {
+  'All-Purpose Compute': {sym:'APC', color:'#FF3621'},
+  'Jobs Compute':        {sym:'JOBS', color:'#1B96FF'},
+  'SQL Warehouse':       {sym:'SQL',  color:'#F2A900'},
+  'Serverless':          {sym:'SRVLS',color:'#00B8A9'},
+  'Delta Live Tables':   {sym:'SDP',  color:'#8B5CF6'},
+  'Model Serving':       {sym:'SERVE',color:'#FF6584'},
+  'Other':               {sym:'OTHER',color:'#64748B'}
+};
+
+// ── DATA FETCHING ──
+function fetchCostData(range) {
+  fetch('/api/cost-stream?range=' + (range || currentRange))
+    .then(function(resp) {
+      if (!resp.ok) return resp.json().catch(function(){return {};}).then(function(e){throw new Error(e.error || 'HTTP ' + resp.status);});
+      return resp.json();
+    })
+    .then(function(data) {
+      if (data.error) throw new Error(data.error);
+      chartData = data;
+      animTarget = data.total_cost || 0;
+      updateMetrics(data);
+      updateTickers(data);
+      updateChart(data);
+      document.getElementById('loadOverlay').classList.add('hidden');
+      document.getElementById('lastUpdate').textContent = 'Updated ' + new Date().toLocaleTimeString();
+      document.getElementById('dataPoints').textContent = data.data_points + ' data points';
+    })
+    .catch(function(e) {
+      var ov = document.getElementById('loadOverlay');
+      ov.innerHTML = '<div class="error-msg" style="max-width:400px;text-align:center">' + e.message + '</div>';
+    });
+}
+
+// ── ANIMATED COUNTER ──
+function animateCounter() {
+  var diff = animTarget - animCurrent;
+  if (Math.abs(diff) < 0.5) { animCurrent = animTarget; }
+  else { animCurrent += diff * 0.08; }
+  document.getElementById('bigNumber').textContent = '$' + Math.round(animCurrent).toLocaleString('en-US');
+  requestAnimationFrame(animateCounter);
+}
+
+// ── METRICS ──
+function updateMetrics(d) {
+  var el = document.getElementById('bigNumber');
+  if (!activeTicker) {
+    el.className = 'big-number ' + (d.total_cost > d.yesterday_total ? 'up' : d.total_cost < d.yesterday_total ? 'down' : 'flat');
+  }
+  document.getElementById('burnRate').innerHTML = '$' + d.burn_rate_per_min.toFixed(2) + '<span style="font-size:11px;color:#64748B">/min</span>';
+  document.getElementById('projected').textContent = '$' + d.projected_daily.toLocaleString('en-US', {maximumFractionDigits: 0});
+
+  var diff = d.total_cost - d.yesterday_total;
+  var pct = d.yesterday_total > 0 ? ((diff / d.yesterday_total) * 100).toFixed(1) : '0';
+  var arrow = diff >= 0 ? '\u2191' : '\u2193';
+  var cls = diff >= 0 ? 'arrow-up' : 'arrow-down';
+  document.getElementById('vsYesterday').innerHTML = '<span class="' + cls + '">' + arrow + ' $' + Math.abs(Math.round(diff)).toLocaleString() + ' (' + pct + '%)</span>';
+}
+
+// ── TICKERS ──
+function updateTickers(d) {
+  var strip = document.getElementById('tickerStrip');
+  var html = '<span class="ticker-label">Filter</span>';
+
+  // "ALL" ticker
+  html += '<button class="ticker' + (activeTicker === null ? ' active' : '') + '" '
+    + 'style="--tc:#E2E8F0;--tc-bg:rgba(226,232,240,0.08)" '
+    + 'onclick="setTicker(null)">'
+    + '<span class="t-sym">ALL</span>'
+    + '<span class="t-cost">$' + Math.round(d.total_cost).toLocaleString() + '</span>'
+    + '</button>';
+
+  // Per-SKU tickers
+  if (d.skus) {
+    d.skus.forEach(function(s) {
+      var t = TICKERS[s.category] || {sym: s.category.substring(0,4).toUpperCase(), color: '#64748B'};
+      var isActive = activeTicker === s.category;
+      html += '<button class="ticker' + (isActive ? ' active' : '') + '" '
+        + 'style="--tc:' + t.color + ';--tc-bg:' + t.color + '12" '
+        + 'onclick="setTicker(\'' + s.category.replace(/'/g, "\\'") + '\')">'
+        + '<span class="t-dot" style="background:' + t.color + '"></span>'
+        + '<span class="t-sym">' + t.sym + '</span>'
+        + '<span class="t-cost">$' + Math.round(s.cost).toLocaleString() + '</span>'
+        + '</button>';
+    });
+  }
+  strip.innerHTML = html;
+}
+
+function setTicker(cat) {
+  activeTicker = cat;
+  if (cat && chartData.sku_ts && chartData.sku_ts[cat]) {
+    var s = chartData.sku_ts[cat];
+    var total = 0; s.forEach(function(p){total += p.cost;});
+    animTarget = total;
+  } else {
+    animTarget = chartData.total_cost || 0;
+  }
+  updateTickers(chartData);
+  updateChart(chartData);
+}
+
+// ── CHART RENDERING ──
+function updateChart(d) {
+  var canvas = document.getElementById('costChart');
+  var container = document.getElementById('chartContainer');
+  var rect = container.getBoundingClientRect();
+  if (rect.width < 10 || rect.height < 10) return;
+  var dpr = window.devicePixelRatio || 1;
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  canvas.style.width = rect.width + 'px';
+  canvas.style.height = rect.height + 'px';
+  var ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  var W = rect.width, H = rect.height;
+  var pad = {top: 16, right: 16, bottom: 28, left: 56};
+  var cW = W - pad.left - pad.right;
+  var cH = H - pad.top - pad.bottom;
+  ctx.clearRect(0, 0, W, H);
+
+  if (!d.timeseries || d.timeseries.length < 2) return;
+
+  // Build cumulative series — filter by active ticker
+  var ts;
+  if (activeTicker && d.sku_ts && d.sku_ts[activeTicker]) {
+    ts = d.sku_ts[activeTicker];
+  } else {
+    ts = d.timeseries;
+  }
+  var cumul = []; var sum = 0;
+  ts.forEach(function(p) { sum += p.cost; cumul.push({ts: p.ts, cost: sum}); });
+
+  var yest = d.yesterday || [];
+  var yCumul = []; var ySum = 0;
+  yest.forEach(function(p) { ySum += p.cost; yCumul.push({ts: p.ts, cost: ySum}); });
+
+  // Scales
+  var maxY = Math.max(
+    cumul[cumul.length - 1].cost,
+    yCumul.length ? yCumul[yCumul.length - 1].cost : 0
+  ) * 1.1 || 100;
+
+  function xPos(i, len) { return pad.left + (i / (len - 1)) * cW; }
+  function yPos(v) { return pad.top + cH - (v / maxY) * cH; }
+
+  // Grid lines
+  ctx.strokeStyle = '#1E293B'; ctx.lineWidth = 0.5;
+  var gridN = 5;
+  for (var gi = 0; gi <= gridN; gi++) {
+    var gy = pad.top + (cH / gridN) * gi;
+    ctx.beginPath(); ctx.moveTo(pad.left, gy); ctx.lineTo(W - pad.right, gy); ctx.stroke();
+    var gv = maxY - (maxY / gridN) * gi;
+    ctx.fillStyle = '#475569'; ctx.font = '10px -apple-system,sans-serif'; ctx.textAlign = 'right';
+    ctx.fillText('$' + formatK(gv), pad.left - 6, gy + 3);
+  }
+
+  // X-axis labels
+  ctx.fillStyle = '#475569'; ctx.font = '10px -apple-system,sans-serif'; ctx.textAlign = 'center';
+  var xlCount = Math.min(8, cumul.length);
+  for (var xi = 0; xi < xlCount; xi++) {
+    var xIdx = Math.floor(xi * (cumul.length - 1) / (xlCount - 1));
+    var xx = xPos(xIdx, cumul.length);
+    var xt = new Date(cumul[xIdx].ts);
+    var xLabel = xt.getHours() + ':' + String(xt.getMinutes()).padStart(2, '0');
+    ctx.fillText(xLabel, xx, H - 6);
+  }
+
+  // Yesterday ghost line
+  if (yCumul.length > 1) {
+    ctx.beginPath(); ctx.strokeStyle = '#334155'; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
+    yCumul.forEach(function(p, i) {
+      var x = xPos(i, yCumul.length), y = yPos(p.cost);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+
+  // Determine line color
+  var isUp = cumul[cumul.length - 1].cost > (yCumul.length ? yCumul[yCumul.length - 1].cost : 0);
+  var lineColor = activeTicker ? (TICKERS[activeTicker] || {color:'#64748B'}).color : (isUp ? '#00E676' : '#FF5252');
+
+  // Gradient fill
+  ctx.beginPath();
+  cumul.forEach(function(p, i) {
+    var x = xPos(i, cumul.length), y = yPos(p.cost);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.lineTo(xPos(cumul.length - 1, cumul.length), pad.top + cH);
+  ctx.lineTo(pad.left, pad.top + cH); ctx.closePath();
+  var grad = ctx.createLinearGradient(0, pad.top, 0, pad.top + cH);
+  grad.addColorStop(0, hexToRgba(lineColor, 0.18));
+  grad.addColorStop(1, hexToRgba(lineColor, 0));
+  ctx.fillStyle = grad; ctx.fill();
+
+  // Main line
+  ctx.beginPath(); ctx.strokeStyle = lineColor; ctx.lineWidth = 2; ctx.lineJoin = 'round';
+  cumul.forEach(function(p, i) {
+    var x = xPos(i, cumul.length), y = yPos(p.cost);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  // Pulse dot
+  var lx = xPos(cumul.length - 1, cumul.length);
+  var ly = yPos(cumul[cumul.length - 1].cost);
+  ctx.beginPath(); ctx.arc(lx, ly, 4, 0, Math.PI * 2); ctx.fillStyle = lineColor; ctx.globalAlpha = 0.25; ctx.fill();
+  ctx.globalAlpha = 1; ctx.beginPath(); ctx.arc(lx, ly, 2.5, 0, Math.PI * 2); ctx.fillStyle = lineColor; ctx.fill();
+
+  // Store geometry for hover
+  window._cg = {cumul: cumul, pad: pad, cW: cW, cH: cH, maxY: maxY, W: W, H: H, lineColor: lineColor,
+    xP: function(i) { return pad.left + (i / (cumul.length - 1)) * cW; }, yP: yPos};
+}
+
+// ── HELPERS ──
+function formatK(v) {
+  if (v >= 1000000) return (v / 1000000).toFixed(1) + 'M';
+  if (v >= 1000) return (v / 1000).toFixed(0) + 'K';
+  return v.toFixed(0);
+}
+function hexToRgba(hex, a) {
+  var r = parseInt(hex.slice(1,3), 16);
+  var g = parseInt(hex.slice(3,5), 16);
+  var b = parseInt(hex.slice(5,7), 16);
+  return 'rgba(' + r + ',' + g + ',' + b + ',' + a + ')';
+}
+
+// ── HOVER CROSSHAIR ──
+document.getElementById('costChart').addEventListener('mousemove', function(e) {
+  var g = window._cg; if (!g || !g.cumul.length) return;
+  var rect = e.target.getBoundingClientRect();
+  var mx = e.clientX - rect.left;
+  var idx = Math.round(((mx - g.pad.left) / g.cW) * (g.cumul.length - 1));
+  if (idx < 0 || idx >= g.cumul.length) return;
+  var p = g.cumul[idx];
+  var x = g.xP(idx);
+  var y = g.yP(p.cost);
+
+  var ch = document.getElementById('crosshair');
+  ch.style.display = 'block'; ch.style.left = x + 'px';
+
+  var tt = document.getElementById('tooltip');
+  tt.style.display = 'block';
+  var ttLeft = x + 14; var ttTop = y - 24;
+  if (ttLeft + 140 > g.W) ttLeft = x - 150;
+  tt.style.left = ttLeft + 'px'; tt.style.top = Math.max(4, ttTop) + 'px';
+  var t = new Date(p.ts);
+  tt.querySelector('.tt-time').textContent = t.toLocaleTimeString();
+  tt.querySelector('.tt-cost').textContent = '$' + p.cost.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  tt.querySelector('.tt-cat').textContent = activeTicker ? activeTicker : 'All categories';
+});
+document.getElementById('costChart').addEventListener('mouseleave', function() {
+  document.getElementById('crosshair').style.display = 'none';
+  document.getElementById('tooltip').style.display = 'none';
+});
+
+// ── TIME TOGGLE ──
+document.querySelectorAll('.time-btn').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    document.querySelectorAll('.time-btn').forEach(function(b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+    currentRange = btn.dataset.range;
+    document.getElementById('loadOverlay').classList.remove('hidden');
+    document.getElementById('loadOverlay').innerHTML = '<div class="load-spinner"></div><div class="load-text">Loading cost data...</div><div class="load-sub">Switching to ' + currentRange.toUpperCase() + ' view</div>';
+    fetchCostData(currentRange);
+  });
+});
+
+// ── RESIZE ──
+window.addEventListener('resize', function() { if (chartData.timeseries && chartData.timeseries.length) updateChart(chartData); });
+
+// ── INIT ──
+animateCounter();
+fetchCostData('1d');
+pollTimer = setInterval(function() { fetchCostData(currentRange); }, 60000);
+</script>
+</body>
+</html>

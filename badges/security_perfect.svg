@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 130" width="240" height="260">
+  <defs>
+    <linearGradient id="met_security_perfect" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0%" stop-color="#DDD6FE"/>
+      <stop offset="30%" stop-color="#A78BFA"/>
+      <stop offset="60%" stop-color="#7C3AED"/>
+      <stop offset="100%" stop-color="#5B21B6"/>
+    </linearGradient>
+    <linearGradient id="rim_security_perfect" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#DDD6FE"/>
+      <stop offset="40%" stop-color="#7C3AED"/>
+      <stop offset="100%" stop-color="#4C1D95"/>
+    </linearGradient>
+    <linearGradient id="face_security_perfect" x1="0.3" y1="0" x2="0.7" y2="1">
+      <stop offset="0%" stop-color="#C4B5FD"/>
+      <stop offset="50%" stop-color="#9575F0"/>
+      <stop offset="100%" stop-color="#5B21B6"/>
+    </linearGradient>
+    <radialGradient id="gl_security_perfect" cx="45%" cy="35%" r="50%">
+      <stop offset="0%" stop-color="#DDD6FE" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#7C3AED" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="bev_security_perfect">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="1" result="blur"/>
+      <feSpecularLighting in="blur" surfaceScale="3" specularConstant="0.6" specularExponent="20" result="spec">
+        <fePointLight x="60" y="20" z="80"/>
+      </feSpecularLighting>
+      <feComposite in="spec" in2="SourceAlpha" operator="in" result="specOut"/>
+      <feComposite in="SourceGraphic" in2="specOut" operator="arithmetic" k1="0" k2="1" k3="0.3" k4="0"/>
+    </filter>
+    <filter id="sh_security_perfect"><feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#3B0F80" flood-opacity="0.35"/></filter>
+    <filter id="emb_security_perfect">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="0.5" result="blur"/>
+      <feOffset dy="0.8" result="off"/>
+      <feFlood flood-color="#DDD6FE" flood-opacity="0.4" result="color"/>
+      <feComposite in="color" in2="off" operator="in" result="shadow"/>
+      <feMerge><feMergeNode in="shadow"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <g filter="url(#sh_security_perfect)">
+    <path d="M60,4 L106,24 L106,62 C106,90 84,110 60,120 C36,110 14,90 14,62 L14,24Z" fill="url(#met_security_perfect)" stroke="url(#rim_security_perfect)" stroke-width="3.5"/>
+    <path d="M60,12 L100,29 L100,61 C100,85 80,103 60,112 C40,103 20,85 20,61 L20,29Z" fill="url(#face_security_perfect)" stroke="#5B21B6" stroke-width="0.5"/>
+    <path d="M60,12 L100,29 L100,61 C100,85 80,103 60,112 C40,103 20,85 20,61 L20,29Z" fill="url(#gl_security_perfect)"/>
+    <path d="M60,20 L94,34 L94,60 C94,80 76,96 60,104 C44,96 26,80 26,60 L26,34Z" fill="none" stroke="#5B21B6" stroke-width="0.5" opacity="0.2"/>
+  </g>
+  <circle cx="90.0" cy="58.0" r="1" fill="#DDD6FE" opacity="0.35"/><circle cx="88.2" cy="68.3" r="1" fill="#DDD6FE" opacity="0.35"/><circle cx="83.0" cy="77.3" r="1" fill="#DDD6FE" opacity="0.35"/><circle cx="75.0" cy="84.0" r="1" fill="#DDD6FE" opacity="0.35"/><circle cx="65.2" cy="87.5" r="1" fill="#DDD6FE" opacity="0.35"/><circle cx="54.8" cy="87.5" r="1" fill="#DDD6FE" opacity="0.35"/><circle cx="45.0" cy="84.0" r="1" fill="#DDD6FE" opacity="0.35"/><circle cx="37.0" cy="77.3" r="1" fill="#DDD6FE" opacity="0.35"/><circle cx="31.8" cy="68.3" r="1" fill="#DDD6FE" opacity="0.35"/><circle cx="30.0" cy="58.0" r="1" fill="#DDD6FE" opacity="0.35"/><circle cx="31.8" cy="47.7" r="1" fill="#DDD6FE" opacity="0.35"/><circle cx="37.0" cy="38.7" r="1" fill="#DDD6FE" opacity="0.35"/><circle cx="45.0" cy="32.0" r="1" fill="#DDD6FE" opacity="0.35"/><circle cx="54.8" cy="28.5" r="1" fill="#DDD6FE" opacity="0.35"/><circle cx="65.2" cy="28.5" r="1" fill="#DDD6FE" opacity="0.35"/><circle cx="75.0" cy="32.0" r="1" fill="#DDD6FE" opacity="0.35"/><circle cx="83.0" cy="38.7" r="1" fill="#DDD6FE" opacity="0.35"/><circle cx="88.2" cy="47.7" r="1" fill="#DDD6FE" opacity="0.35"/>
+  <g transform="translate(60,56)" filter="url(#emb_security_perfect)">
+    <circle r="18" fill="#9575F0" stroke="#5B21B6" stroke-width="1.5" opacity="0.3"/>
+    <path d="M-10,2 L-4,8 L12,-8" fill="none" stroke="#5B21B6" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <text x="60" y="127" text-anchor="middle" font-family="Georgia,'Times New Roman',serif" font-size="10" font-weight="700" fill="#3B0F80" letter-spacing="2.5" opacity="0.8">PERFECT</text>
+</svg>

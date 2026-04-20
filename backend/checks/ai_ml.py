@@ -410,31 +410,63 @@ class AIMLCheckRunner(BaseCheckRunner):
             "Monitor token usage", details={"non_conforming": nc, "total_input": total_in, "total_output": total_out})
 
     def check_7_3_4_agentbricks_usage(self) -> CheckResult:
-        """AgentBricks adoption — Knowledge Assistants and Supervisor Agents."""
+        """AgentBricks adoption — Knowledge Assistants, Supervisor Agents, and Agent endpoints."""
         try:
-            rows = self.executor.execute("""
+            # Count agent types from billing
+            billing_rows = self.executor.execute("""
                 SELECT product_features.agent_bricks AS agent_config,
                        COUNT(*) AS records, ROUND(SUM(usage_quantity), 1) AS total_dbu
                 FROM system.billing.usage
                 WHERE usage_date >= DATEADD(DAY, -30, CURRENT_DATE())
                   AND product_features.agent_bricks IS NOT NULL
                 GROUP BY 1""")
+            # Count agent serving endpoints
+            endpoint_rows = self.executor.execute("""
+                SELECT DISTINCT endpoint_name, task
+                FROM system.serving.served_entities
+                WHERE task LIKE '%agent%'""")
         except Exception:
             return CheckResult("7.3.4", "AgentBricks usage (30d)", "GenAI Serving",
                 None, "info", "Could not query AgentBricks usage", "Track agent adoption")
-        total_dbu = sum(float(r.get("total_dbu", 0) or 0) for r in rows)
-        if not rows or total_dbu == 0:
-            return CheckResult("7.3.4", "AgentBricks usage (30d)", "GenAI Serving",
-                None, "info", "No AgentBricks usage detected", "Explore Databricks Agents",
-                recommendation=Recommendation(
-                    action="No AgentBricks usage detected. Explore building AI agents with Databricks Agent Framework.",
-                    impact="Agents automate complex workflows and enable conversational data access.",
-                    priority="low",
-                    docs_url="https://docs.databricks.com/en/generative-ai/agent-framework/index.html"))
-        nc = [{"config": r.get("agent_config", ""), "dbu": r.get("total_dbu", 0)} for r in rows]
+
+        total_dbu = sum(float(r.get("total_dbu", 0) or 0) for r in billing_rows)
+        agent_types = len(billing_rows)
+        agent_endpoints = len(endpoint_rows)
+
+        nc = []
+        for r in billing_rows:
+            cfg = r.get("agent_config", {})
+            if isinstance(cfg, dict):
+                ptype = cfg.get("problem_type", "Unknown")
+            else:
+                ptype = str(cfg)
+            nc.append({"type": ptype, "records": r.get("records", 0),
+                       "total_dbu": r.get("total_dbu", 0)})
+        for r in endpoint_rows:
+            nc.append({"type": "Serving Endpoint", "endpoint": r.get("endpoint_name", ""),
+                       "task": r.get("task", "")})
+
+        if agent_endpoints >= 3 or total_dbu > 100:
+            score, status = 100, "pass"
+        elif agent_endpoints >= 1 or total_dbu > 0:
+            score, status = 50, "partial"
+        else:
+            score, status = 0, "fail"
+
+        rec = None
+        if score < 100:
+            rec = Recommendation(
+                action="Deploy more agents using AgentBricks for knowledge assistants and task automation.",
+                impact="AI agents automate complex workflows and enable natural language interfaces.",
+                priority="medium",
+                docs_url="https://docs.databricks.com/en/generative-ai/agent-framework/index.html")
+
         return CheckResult("7.3.4", "AgentBricks usage (30d)", "GenAI Serving",
-            100, "pass", f"{total_dbu:,.0f} DBUs across {len(rows)} agent type(s)",
-            "Active agent adoption", details={"non_conforming": nc, "total_dbu": total_dbu})
+            score, status,
+            f"{agent_endpoints} agent endpoints, {agent_types} billing types, {total_dbu:,.0f} DBUs",
+            "Active agent deployments",
+            details={"non_conforming": nc}, recommendation=rec)
+
 
     def check_7_3_5_ai_sql_function_adoption(self) -> CheckResult:
         """Usage of AI SQL functions (ai_query, ai_classify, ai_extract, ai_forecast, ai_parse)."""

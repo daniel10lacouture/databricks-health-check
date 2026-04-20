@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 130" width="240" height="260">
+  <defs>
+    <linearGradient id="met_data_storage_perfect" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0%" stop-color="#DDD6FE"/>
+      <stop offset="30%" stop-color="#A78BFA"/>
+      <stop offset="60%" stop-color="#7C3AED"/>
+      <stop offset="100%" stop-color="#5B21B6"/>
+    </linearGradient>
+    <linearGradient id="rim_data_storage_perfect" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#DDD6FE"/>
+      <stop offset="40%" stop-color="#7C3AED"/>
+      <stop offset="100%" stop-color="#4C1D95"/>
+    </linearGradient>
+    <linearGradient id="face_data_storage_perfect" x1="0.3" y1="0" x2="0.7" y2="1">
+      <stop offset="0%" stop-color="#C4B5FD"/>
+      <stop offset="50%" stop-color="#9575F0"/>
+      <stop offset="100%" stop-color="#5B21B6"/>
+    </linearGradient>
+    <radialGradient id="gl_data_storage_perfect" cx="45%" cy="35%" r="50%">
+      <stop offset="0%" stop-color="#DDD6FE" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#7C3AED" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="bev_data_storage_perfect">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="1" result="blur"/>
+      <feSpecularLighting in="blur" surfaceScale="3" specularConstant="0.6" specularExponent="20" result="spec">
+        <fePointLight x="60" y="20" z="80"/>
+      </feSpecularLighting>
+      <feComposite in="spec" in2="SourceAlpha" operator="in" result="specOut"/>
+      <feComposite in="SourceGraphic" in2="specOut" operator="arithmetic" k1="0" k2="1" k3="0.3" k4="0"/>
+    </filter>
+    <filter id="sh_data_storage_perfect"><feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#3B0F80" flood-opacity="0.35"/></filter>
+    <filter id="emb_data_storage_perfect">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="0.5" result="blur"/>
+      <feOffset dy="0.8" result="off"/>
+      <feFlood flood-color="#DDD6FE" flood-opacity="0.4" result="color"/>
+      <feComposite in="color" in2="off" operator="in" result="shadow"/>
+      <feMerge><feMergeNode in="shadow"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <g filter="url(#sh_data_storage_perfect)">
+    <ellipse cx="60" cy="22" rx="44" ry="16" fill="url(#met_data_storage_perfect)" stroke="url(#rim_data_storage_perfect)" stroke-width="2.5"/>
+    <path d="M16,22 L16,92 C16,102 36,112 60,112 C84,112 104,102 104,92 L104,22" fill="url(#met_data_storage_perfect)" stroke="url(#rim_data_storage_perfect)" stroke-width="2.5"/>
+    <ellipse cx="60" cy="22" rx="38" ry="12" fill="url(#face_data_storage_perfect)" stroke="#5B21B6" stroke-width="0.5"/>
+    <ellipse cx="60" cy="22" rx="44" ry="16" fill="url(#gl_data_storage_perfect)"/>
+  </g>
+  <ellipse cx="60" cy="42" rx="42" ry="12" fill="none" stroke="#5B21B6" stroke-width="1" opacity="0.3"/>
+  <ellipse cx="60" cy="62" rx="42" ry="12" fill="none" stroke="#5B21B6" stroke-width="1" opacity="0.25"/>
+  <ellipse cx="60" cy="82" rx="42" ry="12" fill="none" stroke="#5B21B6" stroke-width="0.8" opacity="0.2"/>
+  <circle cx="94.0" cy="42.0" r="0.9" fill="#DDD6FE" opacity="0.25"/><circle cx="91.9" cy="53.6" r="0.9" fill="#DDD6FE" opacity="0.25"/><circle cx="86.0" cy="63.9" r="0.9" fill="#DDD6FE" opacity="0.25"/><circle cx="77.0" cy="71.4" r="0.9" fill="#DDD6FE" opacity="0.25"/><circle cx="65.9" cy="75.5" r="0.9" fill="#DDD6FE" opacity="0.25"/><circle cx="54.1" cy="75.5" r="0.9" fill="#DDD6FE" opacity="0.25"/><circle cx="43.0" cy="71.4" r="0.9" fill="#DDD6FE" opacity="0.25"/><circle cx="34.0" cy="63.9" r="0.9" fill="#DDD6FE" opacity="0.25"/><circle cx="28.1" cy="53.6" r="0.9" fill="#DDD6FE" opacity="0.25"/><circle cx="26.0" cy="42.0" r="0.9" fill="#DDD6FE" opacity="0.25"/><circle cx="28.1" cy="30.4" r="0.9" fill="#DDD6FE" opacity="0.25"/><circle cx="34.0" cy="20.1" r="0.9" fill="#DDD6FE" opacity="0.25"/><circle cx="43.0" cy="12.6" r="0.9" fill="#DDD6FE" opacity="0.25"/><circle cx="54.1" cy="8.5" r="0.9" fill="#DDD6FE" opacity="0.25"/><circle cx="65.9" cy="8.5" r="0.9" fill="#DDD6FE" opacity="0.25"/><circle cx="77.0" cy="12.6" r="0.9" fill="#DDD6FE" opacity="0.25"/><circle cx="86.0" cy="20.1" r="0.9" fill="#DDD6FE" opacity="0.25"/><circle cx="91.9" cy="30.4" r="0.9" fill="#DDD6FE" opacity="0.25"/>
+  <circle cx="94.0" cy="62.0" r="0.9" fill="#DDD6FE" opacity="0.2"/><circle cx="91.9" cy="73.6" r="0.9" fill="#DDD6FE" opacity="0.2"/><circle cx="86.0" cy="83.9" r="0.9" fill="#DDD6FE" opacity="0.2"/><circle cx="77.0" cy="91.4" r="0.9" fill="#DDD6FE" opacity="0.2"/><circle cx="65.9" cy="95.5" r="0.9" fill="#DDD6FE" opacity="0.2"/><circle cx="54.1" cy="95.5" r="0.9" fill="#DDD6FE" opacity="0.2"/><circle cx="43.0" cy="91.4" r="0.9" fill="#DDD6FE" opacity="0.2"/><circle cx="34.0" cy="83.9" r="0.9" fill="#DDD6FE" opacity="0.2"/><circle cx="28.1" cy="73.6" r="0.9" fill="#DDD6FE" opacity="0.2"/><circle cx="26.0" cy="62.0" r="0.9" fill="#DDD6FE" opacity="0.2"/><circle cx="28.1" cy="50.4" r="0.9" fill="#DDD6FE" opacity="0.2"/><circle cx="34.0" cy="40.1" r="0.9" fill="#DDD6FE" opacity="0.2"/><circle cx="43.0" cy="32.6" r="0.9" fill="#DDD6FE" opacity="0.2"/><circle cx="54.1" cy="28.5" r="0.9" fill="#DDD6FE" opacity="0.2"/><circle cx="65.9" cy="28.5" r="0.9" fill="#DDD6FE" opacity="0.2"/><circle cx="77.0" cy="32.6" r="0.9" fill="#DDD6FE" opacity="0.2"/><circle cx="86.0" cy="40.1" r="0.9" fill="#DDD6FE" opacity="0.2"/><circle cx="91.9" cy="50.4" r="0.9" fill="#DDD6FE" opacity="0.2"/>
+  <g transform="translate(60,104) scale(0.8)" opacity="0.35">
+    <path d="M-4,0 C-8,-6 -14,-8 -16,-4 C-14,-2 -10,-1 -4,0Z" fill="#7C3AED"/>
+    <path d="M-6,-4 C-10,-12 -18,-14 -20,-8 C-16,-6 -12,-4 -6,-4Z" fill="#7C3AED"/>
+    <path d="M-7,-10 C-10,-18 -16,-22 -20,-16 C-16,-12 -12,-10 -7,-10Z" fill="#7C3AED"/>
+    <path d="M4,0 C8,-6 14,-8 16,-4 C14,-2 10,-1 4,0Z" fill="#7C3AED"/>
+    <path d="M6,-4 C10,-12 18,-14 20,-8 C16,-6 12,-4 6,-4Z" fill="#7C3AED"/>
+    <path d="M7,-10 C10,-18 16,-22 20,-16 C16,-12 12,-10 7,-10Z" fill="#7C3AED"/>
+  </g>
+  <g transform="translate(60,62)" filter="url(#emb_data_storage_perfect)">
+    <circle r="8" fill="#9575F0" stroke="#5B21B6" stroke-width="1.5" opacity="0.5"/>
+    <circle r="3" fill="#5B21B6" opacity="0.6"/>
+    <circle r="1" fill="#DDD6FE" opacity="0.5"/>
+  </g>
+  <text x="60" y="127" text-anchor="middle" font-family="Georgia,'Times New Roman',serif" font-size="10" font-weight="700" fill="#3B0F80" letter-spacing="2.5" opacity="0.8">PERFECT</text>
+</svg>

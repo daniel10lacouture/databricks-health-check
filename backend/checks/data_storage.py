@@ -16,7 +16,7 @@ class DataStorageCheckRunner(BaseCheckRunner):
     icon = "💾"
 
     def get_subsections(self):
-        return ["Format & Layout", "Table Maintenance", "Storage Optimization", "Data Freshness & Lifecycle"]
+        return ["Format & Layout", "Table Maintenance", "Storage Optimization", "Data Freshness & Lifecycle", "Lakehouse Federation"]
 
     def is_active(self):
         try:
@@ -134,66 +134,7 @@ class DataStorageCheckRunner(BaseCheckRunner):
 
     # ── Storage Optimization ─────────────────────────────────────
 
-    def check_11_3_1_storage_volume(self) -> CheckResult:
-        """Total managed storage volume and table count."""
-        try:
-            rows = self.executor.execute("""
-                SELECT COUNT(DISTINCT CONCAT(catalog_name, '.', schema_name, '.', table_name)) AS total_tables,
-                       ROUND(SUM(active_bytes) / (1024*1024*1024*1024.0), 2) AS total_tb,
-                       ROUND(AVG(active_bytes) / (1024*1024.0), 1) AS avg_mb
-                FROM system.storage.table_metrics_history
-                WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM system.storage.table_metrics_history)""")
-        except Exception:
-            return CheckResult("11.3.1", "Storage volume overview", "Storage Optimization",
-                None, "info", "Could not query storage metrics", "Monitor storage growth")
-        r = rows[0] if rows else {}
-        tables = int(r.get("total_tables", 0) or 0)
-        tb = float(r.get("total_tb", 0) or 0)
-        avg_mb = float(r.get("avg_mb", 0) or 0)
-        return CheckResult("11.3.1", "Storage volume overview", "Storage Optimization",
-            None, "info", f"{tables} tables, {tb:.1f} TB total, {avg_mb:.0f} MB avg",
-            "Monitor storage growth", details={"tables": tables, "total_tb": tb, "avg_mb": avg_mb})
 
-    def check_11_3_2_storage_growth(self) -> CheckResult:
-        """Detect tables with rapid storage growth over last 30 days."""
-        try:
-            rows = self.executor.execute("""
-                WITH bounds AS (
-                    SELECT catalog_name, schema_name, table_name,
-                           MIN(CASE WHEN snapshot_date <= DATEADD(DAY, -25, CURRENT_DATE()) THEN active_bytes END) AS early_bytes,
-                           MAX(CASE WHEN snapshot_date >= DATEADD(DAY, -5, CURRENT_DATE()) THEN active_bytes END) AS late_bytes
-                    FROM system.storage.table_metrics_history
-                    WHERE snapshot_date >= DATEADD(DAY, -30, CURRENT_DATE())
-                    GROUP BY 1, 2, 3
-                    HAVING MIN(CASE WHEN snapshot_date <= DATEADD(DAY, -25, CURRENT_DATE()) THEN active_bytes END) > 0
-                )
-                SELECT catalog_name, schema_name, table_name,
-                       ROUND(early_bytes / (1024*1024.0), 1) AS early_mb,
-                       ROUND(late_bytes / (1024*1024.0), 1) AS late_mb,
-                       ROUND((late_bytes - early_bytes) * 100.0 / early_bytes, 1) AS growth_pct
-                FROM bounds
-                WHERE late_bytes > early_bytes * 1.5 AND late_bytes > 1073741824
-                ORDER BY (late_bytes - early_bytes) DESC LIMIT 15""")
-        except Exception:
-            return CheckResult("11.3.2", "Rapid storage growth detection", "Storage Optimization",
-                None, "info", "Could not analyze storage growth", "Monitor table bloat")
-        if not rows:
-            return CheckResult("11.3.2", "Rapid storage growth detection", "Storage Optimization",
-                100, "pass", "No tables with >50% growth exceeding 1GB", "No excessive growth")
-        nc = [{"table": f"{r.get('catalog_name','')}.{r.get('schema_name','')}.{r.get('table_name','')}",
-               "growth_pct": r.get("growth_pct", 0), "current_mb": r.get("late_mb", 0)} for r in rows]
-        score = 50 if len(rows) <= 5 else 0
-        return CheckResult("11.3.2", "Rapid storage growth detection", "Storage Optimization",
-            score, "partial" if score > 0 else "fail",
-            f"{len(rows)} tables with >50% storage growth", "No excessive growth",
-            details={"non_conforming": nc},
-            recommendation=Recommendation(
-                action=f"{len(rows)} tables grew >50% in 30 days. Review for runaway ingestion or missing VACUUM.",
-                impact="Uncontrolled growth inflates cloud storage costs and degrades query performance.",
-                priority="high" if len(rows) > 5 else "medium",
-                docs_url="https://docs.databricks.com/en/sql/language-manual/delta-vacuum.html"))
-
-    # ── Data Freshness & Lifecycle ───────────────────────────────
 
     def check_11_4_1_stale_tables(self) -> CheckResult:
         """Identify tables not modified in 30/90 days."""
@@ -273,3 +214,139 @@ class DataStorageCheckRunner(BaseCheckRunner):
         return CheckResult("11.4.3", "Column documentation coverage", "Data Freshness & Lifecycle",
             score, status, f"{pct}% ({documented}/{total} columns)", ">30% columns documented",
             details={"documented": documented, "total": total})
+
+    # ── Lakehouse Federation ─────────────────────────────────────────
+
+    def check_11_5_1_federation_connection_inventory(self) -> CheckResult:
+        """Lakehouse Federation connection inventory and documentation."""
+        try:
+            rows = self.executor.execute("""
+                SELECT
+                    COUNT(*) AS total_connections,
+                    COUNT(DISTINCT connection_type) AS distinct_types,
+                    COUNT(CASE WHEN comment IS NOT NULL AND comment != '' THEN 1 END) AS documented,
+                    COUNT(CASE WHEN connection_type NOT IN ('MANAGED_POSTGRESQL', 'HTTP', 'ONLINE_CATALOG') THEN 1 END) AS federation_connections
+                FROM system.information_schema.connections""")
+        except Exception:
+            return CheckResult("11.5.1", "Lakehouse Federation Connections",
+                "Lakehouse Federation", 0, "not_evaluated",
+                "Could not query connections", "Federation connection inventory")
+
+        r = rows[0] if rows else {}
+        total = r.get("total_connections", 0) or 0
+        fed = r.get("federation_connections", 0) or 0
+        documented = r.get("documented", 0) or 0
+        types = r.get("distinct_types", 0) or 0
+
+        if fed == 0:
+            return CheckResult("11.5.1", "Lakehouse Federation Connections",
+                "Lakehouse Federation", 0, "info",
+                "No federation connections configured", "Active federation connections",
+                details={"summary": f"{total} total connections, 0 federation (database) connections"},
+                recommendation=Recommendation(
+                    action="Set up Lakehouse Federation to query external databases (PostgreSQL, Snowflake, SQL Server, etc.) without data movement.",
+                    impact="Federation enables real-time cross-platform queries without ETL overhead.",
+                    priority="low",
+                    docs_url="https://docs.databricks.com/en/query-federation/index.html"))
+
+        doc_pct = round(documented / total * 100) if total > 0 else 0
+        score = 100 if doc_pct >= 80 else 50 if doc_pct >= 40 else 30
+        status = "pass" if score == 100 else "partial" if score >= 50 else "fail"
+
+        nc = [{"summary": f"{fed} federation connections across {types} types, {doc_pct}% documented"}]
+        return CheckResult("11.5.1", "Lakehouse Federation Connections",
+            "Lakehouse Federation", score, status,
+            f"{fed} federation connections ({doc_pct}% documented)", "All connections documented",
+            details={"non_conforming": nc},
+            recommendation=Recommendation(
+                action=f"Document {total - documented} undocumented connections with descriptions of their purpose and data sources.",
+                impact="Documentation improves discoverability and governance of federated data sources.",
+                priority="medium",
+                docs_url="https://docs.databricks.com/en/query-federation/index.html") if doc_pct < 80 else None)
+
+    def check_11_5_2_federation_privilege_audit(self) -> CheckResult:
+        """Audit access control on Lakehouse Federation connections."""
+        try:
+            rows = self.executor.execute("""
+                SELECT
+                    connection_name,
+                    COUNT(DISTINCT grantee) AS grantee_count,
+                    COUNT(CASE WHEN is_grantable = 'YES' THEN 1 END) AS grantable_count
+                FROM system.information_schema.connection_privileges
+                GROUP BY connection_name
+                ORDER BY grantee_count DESC
+                LIMIT 50""")
+        except Exception:
+            return CheckResult("11.5.2", "Federation Privilege Audit",
+                "Lakehouse Federation", 0, "not_evaluated",
+                "Could not query connection privileges", "Controlled federation access")
+
+        if not rows:
+            return CheckResult("11.5.2", "Federation Privilege Audit",
+                "Lakehouse Federation", 100, "pass",
+                "No explicit connection grants (default)", "Controlled federation access")
+
+        total_conns = len(rows)
+        wide_access = [r for r in rows if (r.get("grantee_count", 0) or 0) > 10]
+        grantable = [r for r in rows if (r.get("grantable_count", 0) or 0) > 0]
+
+        issues = []
+        if wide_access:
+            issues.append(f"{len(wide_access)} connections accessible by >10 principals")
+        if grantable:
+            issues.append(f"{len(grantable)} connections with re-grantable permissions")
+
+        score = 100 if not issues else 50
+        status = "pass" if score == 100 else "partial"
+
+        nc = [{"connection": r.get("connection_name",""), "grantees": r.get("grantee_count",0)} for r in wide_access[:10]]
+        return CheckResult("11.5.2", "Federation Privilege Audit",
+            "Lakehouse Federation", score, status,
+            f"{total_conns} connections with explicit grants" + (f" ({'; '.join(issues)})" if issues else ""),
+            "Least-privilege access on all connections",
+            details={"non_conforming": nc} if nc else {},
+            recommendation=Recommendation(
+                action="Review connections with broad access. Restrict federation connection grants to specific groups and avoid re-grantable permissions.",
+                impact="Tighter access control prevents unauthorized queries against external databases.",
+                priority="medium",
+                docs_url="https://docs.databricks.com/en/query-federation/index.html") if issues else None)
+
+    def check_11_5_3_stale_federation_connections(self) -> CheckResult:
+        """Detect stale Lakehouse Federation connections not altered in 90+ days."""
+        try:
+            rows = self.executor.execute("""
+                SELECT
+                    connection_name, connection_type, connection_owner,
+                    last_altered, comment,
+                    DATEDIFF(DAY, last_altered, CURRENT_DATE()) AS days_stale
+                FROM system.information_schema.connections
+                WHERE connection_type NOT IN ('MANAGED_POSTGRESQL', 'HTTP', 'ONLINE_CATALOG')
+                  AND DATEDIFF(DAY, last_altered, CURRENT_DATE()) > 90
+                ORDER BY days_stale DESC
+                LIMIT 30""")
+        except Exception:
+            return CheckResult("11.5.3", "Stale Federation Connections",
+                "Lakehouse Federation", 0, "not_evaluated",
+                "Could not query connections", "No stale connections")
+
+        if not rows:
+            return CheckResult("11.5.3", "Stale Federation Connections",
+                "Lakehouse Federation", 100, "pass",
+                "No stale federation connections (>90d)", "All connections recently maintained")
+
+        stale_count = len(rows)
+        nc = [{"connection": r.get("connection_name",""), "type": r.get("connection_type",""),
+               "days_stale": r.get("days_stale",0), "owner": r.get("connection_owner","")} for r in rows[:10]]
+
+        score = 50 if stale_count <= 5 else 30
+        return CheckResult("11.5.3", "Stale Federation Connections",
+            "Lakehouse Federation", score, "partial" if score >= 50 else "fail",
+            f"{stale_count} federation connections not updated in >90 days",
+            "All connections recently maintained",
+            details={"non_conforming": nc},
+            recommendation=Recommendation(
+                action=f"Review {stale_count} stale federation connections. Remove unused ones and verify credentials are still valid for active ones.",
+                impact="Stale connections may have expired credentials or point to decommissioned databases.",
+                priority="low",
+                docs_url="https://docs.databricks.com/en/query-federation/index.html"))
+

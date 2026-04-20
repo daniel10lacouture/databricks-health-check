@@ -108,6 +108,7 @@ def get_runners(executor, api_client, include_table_analysis):
     from checks.workspace_admin import WorkspaceAdminCheckRunner
     from checks.bi_tooling import BIToolingCheckRunner
     from checks.adoption import AdoptionCheckRunner
+    from checks.genie_code import GenieCodeCheckRunner
 
     return [
         DataEngineeringCheckRunner(executor, api_client, include_table_analysis),
@@ -123,6 +124,7 @@ def get_runners(executor, api_client, include_table_analysis):
         DeltaSharingCheckRunner(executor, api_client, include_table_analysis),
         WorkspaceAdminCheckRunner(executor, api_client, include_table_analysis),
         AdoptionCheckRunner(executor, api_client, include_table_analysis),
+        GenieCodeCheckRunner(executor, api_client, include_table_analysis),
         DataStorageCheckRunner(executor, api_client, include_table_analysis),
     ]
 
@@ -1283,7 +1285,334 @@ def index():
 
 @app.route("/<path:path>")
 def static_files(path):
-    return send_from_directory(str(FRONTEND_DIST), path)
+    # Don't serve static files for API routes
+    if path.startswith("api/"):
+        return jsonify({"error": "Not found"}), 404
+    try:
+        return send_from_directory(str(FRONTEND_DIST), path)
+    except Exception:
+        return send_from_directory(str(FRONTEND_DIST), "index.html")
+
+
+
+
+# ── LIVE COST MONITOR ────────────────────────────────────────────────
+
+@app.route("/live-monitor")
+def live_monitor_page():
+    """Redirect to Mission Control."""
+    from flask import redirect
+    return redirect("/mission-control", code=302)
+
+@app.route("/mission-control")
+def mission_control_page():
+    """Serve the Mission Control page."""
+    import os
+    mc_path = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist", "mission-control.html")
+    if os.path.exists(mc_path):
+        return send_from_directory(os.path.join(os.path.dirname(__file__), "..", "frontend", "dist"), "mission-control.html")
+    return "Mission Control page not found", 404
+
+@app.route("/api/smart-feed")
+def smart_feed():
+    """Generate smart feed cards based on user's catalog and usage."""
+    import random
+    
+    # For now, return static cards that will be dynamically filtered on the frontend
+    # In the future, this will scan Unity Catalog and generate AI-powered suggestions
+    
+    cards = [
+        {
+            "type": "challenge",
+            "title": "\U0001F3C6 Weekly: Create a Dashboard",
+            "description": "Build a dashboard from your top tables. Share insights with your team in one click.",
+            "score": 40,
+            "action": "Start Challenge",
+            "primary": True
+        },
+        {
+            "type": "usecase", 
+            "title": "\U0001F9E0 Predictive Analytics",
+            "description": "Your data has time-series patterns. Build a forecasting model with AutoML and deploy it to production.",
+            "score": 120,
+            "roi": "Est. 25% better forecasts",
+            "action": "Build with AI",
+            "primary": True
+        },
+        {
+            "type": "tip",
+            "title": "\u26A1 Enable Photon",
+            "description": "Get 3-5x query speedup on your SQL workloads at the same cost. One-click activation.",
+            "score": 30,
+            "action": "Enable Now"
+        },
+        {
+            "type": "suggested",
+            "title": "\U0001F4CA Real-time Dashboard",
+            "description": "Connect streaming data to a live dashboard. Update in seconds, not hours.",
+            "score": 80,
+            "roi": "10x faster insights",
+            "action": "Try Streaming"
+        },
+        {
+            "type": "optimize",
+            "title": "\U0001F680 Right-size Your Clusters",
+            "description": "We detected idle capacity. Consolidate and reinvest savings into new use cases.",
+            "score": 25,
+            "action": "Review Clusters"
+        }
+    ]
+    
+    # Shuffle to vary the experience
+    random.shuffle(cards)
+    
+    return jsonify({
+        "cards": cards[:4],  # Return 4 cards
+        "score": 420,  # Placeholder - will be computed from usage data
+        "unlocked": 5,
+        "total_capabilities": 8
+    })
+
+
+@app.route("/api/cost-stream", methods=["GET"])
+def cost_stream():
+    """Return billing data for the live cost monitor."""
+    import requests as _req
+
+    user_token = request.headers.get("x-forwarded-access-token")
+    with state_lock:
+        wh_id = health_check_state.get("warehouse_id")
+    
+    # Also accept from query params
+    wh_id = wh_id or request.args.get("warehouse_id")
+    ws_host = get_host()
+
+    if not user_token:
+        return jsonify({"error": "No auth token. Please run a health check first."}), 401
+    if not wh_id:
+        # Auto-detect a warehouse
+        try:
+            from databricks.sdk import WorkspaceClient as _WC
+            _w = _WC()
+            _warehouses = list(_w.warehouses.list())
+            for _wh in _warehouses:
+                _st = str(getattr(_wh, 'state', '')).split('.')[-1]
+                if _st == 'RUNNING' and getattr(_wh, 'enable_serverless_compute', False):
+                    wh_id = _wh.id
+                    break
+            if not wh_id:
+                for _wh in _warehouses:
+                    _st = str(getattr(_wh, 'state', '')).split('.')[-1]
+                    if _st == 'RUNNING':
+                        wh_id = _wh.id
+                        break
+            if not wh_id and _warehouses:
+                wh_id = _warehouses[0].id
+        except Exception as _e:
+            logger.warning(f"Auto-detect warehouse failed: {_e}")
+    if not wh_id:
+        return jsonify({"error": "No warehouse available. Please run a health check first."}), 400
+
+    time_range = request.args.get("range", "1d")  # 1h, 1d, 7d, 30d
+
+    range_map = {
+        "1h": "INTERVAL 2 HOUR",
+        "1d": "INTERVAL 1 DAY",
+        "7d": "INTERVAL 7 DAY",
+        "30d": "INTERVAL 30 DAY",
+    }
+    interval = range_map.get(time_range, "INTERVAL 1 DAY")
+    
+    # Granularity: 1h/1d = per minute grouping, 7d = per hour, 30d = per day
+    if time_range in ("1h", "1d"):
+        trunc = "HOUR"
+        trunc_fine = "HOUR"
+    elif time_range == "7d":
+        trunc = "HOUR"
+        trunc_fine = "HOUR"
+    else:
+        trunc = "DAY"
+        trunc_fine = "DAY"
+
+    sql = f"""
+    WITH today_data AS (
+        SELECT
+            date_trunc('{trunc}', u.usage_start_time) AS ts,
+            u.sku_name,
+            SUM(u.usage_quantity * COALESCE(lp.pricing.effective_list.default, lp.pricing.default, 0)) AS cost
+        FROM system.billing.usage u
+        LEFT JOIN system.billing.list_prices lp
+          ON u.sku_name = lp.sku_name
+          AND u.cloud = lp.cloud
+          AND u.usage_unit = lp.usage_unit
+          AND u.usage_start_time >= lp.price_start_time
+          AND (lp.price_end_time IS NULL OR u.usage_start_time < lp.price_end_time)
+        WHERE u.usage_start_time >= current_timestamp() - {interval}
+          AND u.usage_start_time <= current_timestamp()
+        GROUP BY 1, 2
+    ),
+    yesterday_data AS (
+        SELECT
+            date_trunc('{trunc}', u.usage_start_time + {interval}) AS ts,
+            SUM(u.usage_quantity * COALESCE(lp.pricing.effective_list.default, lp.pricing.default, 0)) AS cost
+        FROM system.billing.usage u
+        LEFT JOIN system.billing.list_prices lp
+          ON u.sku_name = lp.sku_name
+          AND u.cloud = lp.cloud
+          AND u.usage_unit = lp.usage_unit
+          AND u.usage_start_time >= lp.price_start_time
+          AND (lp.price_end_time IS NULL OR u.usage_start_time < lp.price_end_time)
+        WHERE u.usage_start_time >= current_timestamp() - ({interval} + {interval})
+          AND u.usage_start_time < current_timestamp() - {interval}
+        GROUP BY 1
+    ),
+    time_series AS (
+        SELECT ts, SUM(cost) AS cost FROM today_data GROUP BY ts ORDER BY ts
+    ),
+    sku_totals AS (
+        SELECT
+            CASE
+                WHEN sku_name LIKE '%ALL_PURPOSE%' THEN 'All-Purpose Compute'
+                WHEN sku_name LIKE '%JOBS%' THEN 'Jobs Compute'
+                WHEN sku_name LIKE '%SQL%' THEN 'SQL Warehouse'
+                WHEN sku_name LIKE '%SERVERLESS%' THEN 'Serverless'
+                WHEN sku_name LIKE '%DLT%' THEN 'Delta Live Tables'
+                WHEN sku_name LIKE '%MODEL%' OR sku_name LIKE '%SERVING%' THEN 'Model Serving'
+                ELSE 'Other'
+            END AS category,
+            SUM(cost) AS total_cost
+        FROM today_data
+        GROUP BY 1
+        ORDER BY total_cost DESC
+        LIMIT 8
+    )
+    SELECT 'timeseries' AS qtype, CAST(ts AS STRING) AS k, CAST(cost AS STRING) AS v, NULL AS v2
+    FROM time_series
+    UNION ALL
+    SELECT 'yesterday' AS qtype, CAST(ts AS STRING) AS k, CAST(cost AS STRING) AS v, NULL AS v2
+    FROM yesterday_data
+    UNION ALL
+    SELECT 'sku' AS qtype, category AS k, CAST(total_cost AS STRING) AS v, NULL AS v2
+    FROM sku_totals
+    UNION ALL
+    SELECT 'sku_ts' AS qtype, CAST(ts AS STRING) AS k, CAST(cost AS STRING) AS v, category AS v2
+    FROM (
+        SELECT ts,
+            CASE
+                WHEN sku_name LIKE '%ALL_PURPOSE%' THEN 'All-Purpose Compute'
+                WHEN sku_name LIKE '%JOBS%' THEN 'Jobs Compute'
+                WHEN sku_name LIKE '%SQL%' THEN 'SQL Warehouse'
+                WHEN sku_name LIKE '%SERVERLESS%' THEN 'Serverless'
+                WHEN sku_name LIKE '%DLT%' THEN 'Delta Live Tables'
+                WHEN sku_name LIKE '%MODEL%' OR sku_name LIKE '%SERVING%' THEN 'Model Serving'
+                ELSE 'Other'
+            END AS category,
+            SUM(cost) AS cost
+        FROM today_data
+        GROUP BY 1, 2
+    )
+    ORDER BY qtype, k
+    """
+
+    try:
+        api_resp = _req.post(
+            f"{ws_host}/api/2.0/sql/statements",
+            headers={"Authorization": f"Bearer {user_token}"},
+            json={
+                "warehouse_id": wh_id,
+                "statement": sql,
+                "wait_timeout": "50s",
+                "disposition": "INLINE",
+                "format": "JSON_ARRAY",
+            },
+            timeout=60,
+        )
+
+        if api_resp.status_code != 200:
+            return jsonify({"error": f"SQL API error: {api_resp.status_code}"}), 500
+
+        resp_data = api_resp.json()
+        state_val = resp_data.get("status", {}).get("state", "")
+
+        if state_val == "FAILED":
+            err = resp_data.get("status", {}).get("error", {}).get("message", "Unknown")
+            return jsonify({"error": err}), 500
+
+        # Poll if needed
+        if state_val in ("PENDING", "RUNNING"):
+            stmt_id = resp_data.get("statement_id")
+            for _ in range(25):
+                time.sleep(2)
+                poll = _req.get(
+                    f"{ws_host}/api/2.0/sql/statements/{stmt_id}",
+                    headers={"Authorization": f"Bearer {user_token}"},
+                    timeout=15,
+                )
+                resp_data = poll.json()
+                state_val = resp_data.get("status", {}).get("state", "")
+                if state_val in ("SUCCEEDED", "FAILED"):
+                    break
+            if state_val == "FAILED":
+                err = resp_data.get("status", {}).get("error", {}).get("message", "")
+                return jsonify({"error": err}), 500
+
+        if state_val != "SUCCEEDED":
+            return jsonify({"error": f"Query state: {state_val}"}), 500
+
+        rows = resp_data.get("result", {}).get("data_array", [])
+
+        # Parse results
+        timeseries = []
+        yesterday = []
+        skus = []
+        sku_ts = {}
+        for row in rows:
+            qtype, k, v, v2 = row[0], row[1], row[2], row[3] if len(row) > 3 else None
+            if qtype == "timeseries" and k and v:
+                timeseries.append({"ts": k, "cost": float(v)})
+            elif qtype == "yesterday" and k and v:
+                yesterday.append({"ts": k, "cost": float(v)})
+            elif qtype == "sku" and k and v:
+                skus.append({"category": k, "cost": float(v)})
+            elif qtype == "sku_ts" and k and v and v2:
+                if v2 not in sku_ts:
+                    sku_ts[v2] = []
+                sku_ts[v2].append({"ts": k, "cost": float(v)})
+
+        # Calculate metrics
+        total_cost = sum(p["cost"] for p in timeseries)
+        yesterday_total = sum(p["cost"] for p in yesterday)
+
+        # Burn rate (last data point cost / hours)
+        burn_rate = 0
+        if len(timeseries) >= 2:
+            last = timeseries[-1]["cost"]
+            burn_rate = last / 60  # per minute (since grouped by hour, divide by 60)
+        elif len(timeseries) == 1:
+            burn_rate = timeseries[0]["cost"] / 60
+
+        # Projected daily total
+        import datetime
+        now = datetime.datetime.utcnow()
+        hours_elapsed = now.hour + now.minute / 60
+        projected = (total_cost / max(hours_elapsed, 0.5)) * 24 if hours_elapsed > 0 else 0
+
+        return jsonify({
+            "timeseries": timeseries,
+            "yesterday": yesterday,
+            "skus": skus,
+            "sku_ts": sku_ts,
+            "total_cost": round(total_cost, 2),
+            "yesterday_total": round(yesterday_total, 2),
+            "burn_rate_per_min": round(burn_rate, 2),
+            "projected_daily": round(projected, 2),
+            "range": time_range,
+            "data_points": len(timeseries),
+        })
+
+    except Exception as e:
+        logger.error(f"Cost stream error: {e}")
+        return jsonify({"error": str(e)[:200]}), 500
 
 
 if __name__ == "__main__":

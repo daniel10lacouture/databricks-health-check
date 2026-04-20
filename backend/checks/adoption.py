@@ -93,9 +93,9 @@ class AdoptionCheckRunner(BaseCheckRunner):
             rows = self.executor.execute("""
                 SELECT
                     COUNT(*) AS total_queries,
-                    COUNT(CASE WHEN client_application LIKE '%lakeview%'
-                               OR client_application LIKE '%dashboard%'
-                               OR client_application LIKE '%sqlAgent%' THEN 1 END) AS native_dash,
+                    COUNT(CASE WHEN client_application = 'Databricks SQL Dashboard'
+                               OR client_application = 'Databricks SQL Genie Space'
+                               OR client_application LIKE '%lakeview%' THEN 1 END) AS native_dash,
                     COUNT(CASE WHEN client_application LIKE '%tableau%'
                                OR client_application LIKE '%power%bi%'
                                OR client_application LIKE '%looker%'
@@ -383,64 +383,60 @@ class AdoptionCheckRunner(BaseCheckRunner):
     # ── Governance & Security Maturity ──────────────────────────────
 
     def check_13_3_1_identity_management(self) -> CheckResult:
-        """Check for AIM (Automatic Identity Management) vs legacy SCIM."""
+        """Check for SSO adoption and identity management maturity."""
         try:
             rows = self.executor.execute("""
                 SELECT
                     COUNT(CASE WHEN action_name = 'samlLogin' THEN 1 END) AS sso_logins,
-                    COUNT(CASE WHEN action_name = 'tokenLogin' THEN 1 END) AS token_logins,
+                    COUNT(DISTINCT CASE WHEN action_name = 'samlLogin' THEN user_identity.email END) AS sso_users,
                     COUNT(CASE WHEN action_name IN ('add', 'updateUser', 'deactivateUser', 'activateUser') THEN 1 END) AS user_mgmt_events,
-                    COUNT(CASE WHEN action_name IN ('createGroup', 'addPrincipalToGroup', 'addPrincipalsToGroup', 'removePrincipalFromGroup') THEN 1 END) AS group_mgmt_events,
-                    COUNT(CASE WHEN action_name = 'setAdmin' THEN 1 END) AS admin_changes
+                    COUNT(CASE WHEN action_name IN ('createGroup', 'addPrincipalToGroup', 'addPrincipalsToGroup', 'removePrincipalFromGroup') THEN 1 END) AS group_mgmt_events
                 FROM system.access.audit
                 WHERE event_time >= DATEADD(DAY, -30, CURRENT_DATE())
                   AND service_name = 'accounts'""")
         except Exception:
-            return CheckResult("13.3.1", "Automatic Identity Management",
+            return CheckResult("13.3.1", "Identity Management Maturity",
                 "Governance & Security Maturity", 0, "info",
-                "Could not query audit logs for identity events", "AIM enabled, SCIM deprecated")
+                "Could not query audit logs for identity events", "SSO + automated provisioning")
 
         r = rows[0] if rows else {}
-        sso = r.get("sso_logins", 0) or 0
-        token = r.get("token_logins", 0) or 0
-        user_mgmt = r.get("user_mgmt_events", 0) or 0
-        group_mgmt = r.get("group_mgmt_events", 0) or 0
-        admin_changes = r.get("admin_changes", 0) or 0
-        total_logins = sso + token
-        sso_pct = round(sso / total_logins * 100, 1) if total_logins > 0 else 0
+        sso_logins = int(r.get("sso_logins", 0) or 0)
+        sso_users = int(r.get("sso_users", 0) or 0)
+        user_mgmt = int(r.get("user_mgmt_events", 0) or 0)
+        group_mgmt = int(r.get("group_mgmt_events", 0) or 0)
+        has_sso = sso_logins > 0
         has_automated_provisioning = user_mgmt > 100
         has_group_mgmt = group_mgmt > 0
 
-        if sso_pct >= 50 and has_automated_provisioning and has_group_mgmt:
+        if has_sso and has_automated_provisioning and has_group_mgmt:
             score, status = 100, "pass"
-        elif sso_pct >= 30 or has_automated_provisioning:
+        elif has_sso and (has_automated_provisioning or has_group_mgmt):
+            score, status = 75, "partial"
+        elif has_sso:
             score, status = 50, "partial"
         else:
             score, status = 0, "fail"
 
-        benchmark = self._peer_benchmark("workspaces", "SSO-first authentication with automated identity provisioning")
-
         rec = None
         if score < 100:
             actions = []
-            if sso_pct < 50: actions.append(f"Increase SSO adoption (currently {sso_pct}% of logins)")
+            if not has_sso: actions.append("Enable SSO for all users")
             if not has_automated_provisioning: actions.append("Enable Automatic Identity Management for automated user/group sync")
             if not has_group_mgmt: actions.append("Set up group-based access management from your IdP")
             rec = Recommendation(
                 action=". ".join(actions) + ".",
-                impact="SSO with automated provisioning ensures consistent identity management, reduces manual overhead, and improves security posture.",
-                priority="high" if sso_pct < 30 else "medium",
+                impact="SSO with automated provisioning ensures consistent identity management and improves security.",
+                priority="high" if not has_sso else "medium",
                 docs_url="https://docs.databricks.com/en/admin/users-groups/best-practices.html")
 
         return CheckResult("13.3.1", "Identity Management Maturity",
             "Governance & Security Maturity", score, status,
-            f"SSO: {sso_pct}% of logins, {user_mgmt:,} user provisioning, {group_mgmt:,} group events (30d)",
-            "SSO-first auth with automated identity provisioning",
-            details={"sso_logins": sso, "token_logins": token, "sso_pct": sso_pct,
-                     "user_mgmt_events": user_mgmt, "group_mgmt_events": group_mgmt, "admin_changes": admin_changes,
-                     "peer_benchmark": benchmark,
-                     "projected_score_boost": 2 if score < 100 else 0},
+            f"SSO active: {sso_logins:,} logins from {sso_users} users, {user_mgmt:,} provisioning events, {group_mgmt:,} group events (30d)",
+            "SSO + automated identity provisioning",
+            details={"sso_logins": sso_logins, "sso_users": sso_users,
+                     "user_mgmt_events": user_mgmt, "group_mgmt_events": group_mgmt},
             recommendation=rec)
+
 
     def check_13_3_2_service_principal_usage(self) -> CheckResult:
         """Check if production workloads use service principals vs personal credentials."""
@@ -544,51 +540,50 @@ class AdoptionCheckRunner(BaseCheckRunner):
     def check_13_4_1_predictive_optimization_coverage(self) -> CheckResult:
         """Check if Predictive Optimization covers eligible tables."""
         try:
-            eligible = self.executor.execute("""
-                SELECT COUNT(*) AS cnt
-                FROM system.information_schema.tables
-                WHERE table_type = 'MANAGED'
-                  AND data_source_format = 'DELTA'
-                  AND table_schema != 'information_schema'""")
-            optimized = self.executor.execute("""
-                SELECT COUNT(DISTINCT CONCAT(catalog_name, '.', schema_name, '.', table_name)) AS cnt
-                FROM system.storage.predictive_optimization_operations_history
-                WHERE start_time >= DATEADD(DAY, -90, CURRENT_DATE())""")
+            rows = self.executor.execute("""
+                WITH eligible AS (
+                    SELECT CONCAT(table_catalog, '.', table_schema, '.', table_name) AS fqn
+                    FROM system.information_schema.tables
+                    WHERE table_type = 'MANAGED' AND data_source_format = 'DELTA'
+                      AND table_schema != 'information_schema'
+                ),
+                optimized AS (
+                    SELECT DISTINCT CONCAT(catalog_name, '.', schema_name, '.', table_name) AS fqn
+                    FROM system.storage.predictive_optimization_operations_history
+                    WHERE start_time >= DATEADD(DAY, -90, CURRENT_DATE())
+                )
+                SELECT COUNT(DISTINCT e.fqn) AS eligible,
+                       COUNT(DISTINCT o.fqn) AS optimized
+                FROM eligible e
+                LEFT JOIN optimized o ON e.fqn = o.fqn""")
         except Exception:
             return CheckResult("13.4.1", "Predictive Optimization Coverage",
-                "Operational Excellence", 0, "info",
-                "Could not query optimization data", "All eligible tables enrolled in Predictive Optimization")
+                "Optimization & Performance", 0, "not_evaluated",
+                "Could not query Predictive Optimization", "50%+ tables enrolled")
 
-        total_eligible = (eligible[0]["cnt"] if eligible else 0) or 1
-        total_optimized = optimized[0]["cnt"] if optimized else 0
-        pct = round(total_optimized / total_eligible * 100, 1)
+        eligible = int(rows[0].get("eligible", 0)) if rows else 0
+        optimized = int(rows[0].get("optimized", 0)) if rows else 0
+        rate = (optimized / eligible * 100) if eligible > 0 else 0
 
-        if pct >= 50:
-            score, status = 100, "pass"
-        elif pct >= 10:
-            score, status = 50, "partial"
-        else:
-            score, status = 0, "fail"
-
-        benchmark = self._peer_benchmark("jobs", "Predictive Optimization enabled across their managed Delta tables")
+        if rate >= 50: score, status = 100, "pass"
+        elif rate >= 20: score, status = 50, "partial"
+        else: score, status = 0, "fail"
 
         rec = None
-        if pct < 50:
-            gap = total_eligible - total_optimized
+        if score < 100:
             rec = Recommendation(
-                action=f"Enable Predictive Optimization on remaining ~{gap} eligible managed Delta tables. Currently {total_optimized}/{total_eligible} ({pct}%) enrolled.",
-                impact="Automatically runs OPTIMIZE and VACUUM, eliminating manual maintenance jobs and ensuring consistent query performance.",
+                action=f"Enable Predictive Optimization for more tables. Currently {optimized}/{eligible} eligible managed Delta tables ({rate:.1f}%) are optimized.",
+                impact="Predictive Optimization automatically compacts and z-orders tables, improving query performance and reducing storage costs.",
                 priority="medium",
                 docs_url="https://docs.databricks.com/en/optimizations/predictive-optimization.html")
 
         return CheckResult("13.4.1", "Predictive Optimization Coverage",
-            "Operational Excellence", score, status,
-            f"{total_optimized}/{total_eligible} eligible tables ({pct}%) with Predictive Optimization (90d)",
+            "Optimization & Performance", score, status,
+            f"{optimized}/{eligible} eligible tables ({rate:.1f}%) with Predictive Optimization (90d)",
             "50%+ of managed Delta tables enrolled in Predictive Optimization",
-            details={"optimized_tables": total_optimized, "eligible_tables": total_eligible,
-                     "coverage_pct": pct, "peer_benchmark": benchmark,
-                     "projected_score_boost": 2 if score < 100 else 0},
+            details={"non_conforming": [{"eligible": eligible, "optimized": optimized, "rate": f"{rate:.1f}%"}]},
             recommendation=rec)
+
 
     def check_13_4_2_runtime_currency(self) -> CheckResult:
         """Check if clusters are running recent Databricks Runtime versions."""

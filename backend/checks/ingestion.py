@@ -3,8 +3,8 @@ from checks.base import BaseCheckRunner, CheckResult, Recommendation
 
 
 class IngestionCheckRunner(BaseCheckRunner):
-    section_id = "ingestion"
-    section_name = "Data Ingestion"
+    section_id = "data_engineering"
+    section_name = "Data Engineering"
     section_type = "conditional"
     icon = "download"
 

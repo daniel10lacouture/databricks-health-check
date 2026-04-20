@@ -3,8 +3,8 @@ from checks.base import BaseCheckRunner, CheckResult, Recommendation
 
 
 class LakebaseCheckRunner(BaseCheckRunner):
-    section_id = "apps"
-    section_name = "Databricks Apps"
+    section_id = "data_engineering"
+    section_name = "Data Engineering"
     section_type = "conditional"
     icon = "server"
 

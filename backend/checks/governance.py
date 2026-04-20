@@ -222,40 +222,6 @@ class GovernanceCheckRunner(BaseCheckRunner):
             "All volumes managed with proper ownership",
             details={"non_conforming": nc}, recommendation=rec)
 
-    def check_6_4_2_external_locations(self) -> CheckResult:
-        """Check external locations and storage credentials."""
-        try:
-            rows = self.executor.execute("""
-                SELECT external_location_name, url, storage_credential_name, external_location_owner
-                FROM system.information_schema.external_locations
-                LIMIT 20""")
-            creds = self.executor.execute("""
-                SELECT storage_credential_name, 'N/A' AS credential_type, external_location_owner AS credential_owner
-                FROM system.information_schema.storage_credentials
-                LIMIT 20""")
-        except Exception:
-            return CheckResult("6.4.2", "External locations & credentials",
-                "Volume & Storage Governance", 0, "not_evaluated",
-                "Could not query", "External locations secured with named credentials")
-
-        nc_locs = [{"location": r.get("external_location_name",""), "url": r.get("url","")[:60],
-                    "credential": r.get("storage_credential_name",""), "owner": r.get("external_location_owner","")} for r in rows[:10]]
-        nc_creds = [{"credential": r.get("storage_credential_name",""), "type": r.get("credential_type",""),
-                     "owner": r.get("credential_owner","")} for r in creds[:10]]
-        nc = nc_locs + nc_creds
-
-        return CheckResult("6.4.2", "External locations & credentials",
-            "Volume & Storage Governance", 0, "info",
-            f"{len(rows)} external location(s), {len(creds)} storage credential(s)",
-            "External locations secured with named credentials",
-            details={"non_conforming": nc},
-            recommendation=Recommendation(
-                action="Review external locations and ensure each uses a dedicated storage credential with least-privilege access.",
-                impact="Over-broad storage credentials can expose data outside Unity Catalog governance.",
-                priority="low",
-                docs_url="https://docs.databricks.com/en/connect/unity-catalog/storage-credentials.html"))
-
-    # ── Tier 1: Table & Column Documentation ────────────────────────
 
     def check_6_5_1_table_documentation(self):
         """Tier 1: Only 13% of tables have comments."""

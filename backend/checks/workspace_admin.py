@@ -1,5 +1,5 @@
 """Section: Workspace Administration — checks for workspace health, user activity,
-AI assistant adoption, CI/CD practices. Merges former CI/CD section.
+User activity and CI/CD practices. Merges former CI/CD section.
 All checks include drill-down details with actual objects and recommendations."""
 from checks.base import BaseCheckRunner, CheckResult, Recommendation
 
@@ -11,7 +11,7 @@ class WorkspaceAdminCheckRunner(BaseCheckRunner):
     icon = "settings"
 
     def get_subsections(self):
-        return ["User & Resource Activity", "AI Assistant Adoption", "Deployment Practices"]
+        return ["User & Resource Activity", "Deployment Practices"]
 
     def check_12_2_1_active_users(self) -> CheckResult:
         try:
@@ -69,57 +69,6 @@ class WorkspaceAdminCheckRunner(BaseCheckRunner):
             details={"non_conforming": nc}, recommendation=rec)
 
     # ── AI Assistant Adoption (Tier 1) ────────────────────────────────
-
-    def check_12_3_1_assistant_adoption(self) -> CheckResult:
-        """Tier 1: Databricks Assistant usage — measure AI tool adoption."""
-        try:
-            rows = self.executor.execute("""
-                SELECT initiated_by, COUNT(*) AS events
-                FROM system.access.assistant_events
-                WHERE event_time >= DATEADD(DAY, -30, CURRENT_DATE())
-                GROUP BY 1
-                ORDER BY 2 DESC
-                LIMIT 30""")
-            total_events = sum(int(r.get("events",0)) for r in rows)
-            total_users = len(rows)
-        except Exception:
-            return CheckResult("12.3.1", "Databricks Assistant adoption",
-                "AI Assistant Adoption", 0, "not_evaluated",
-                "Could not query assistant events", "Active Assistant usage")
-
-        if total_events == 0:
-            return CheckResult("12.3.1", "Databricks Assistant adoption",
-                "AI Assistant Adoption", 0, "fail",
-                "No Assistant usage detected", "Active Assistant usage",
-                details={"non_conforming": [{"summary": "No Databricks Assistant events found in last 30 days."}]},
-                recommendation=Recommendation(
-                    action="Enable and promote Databricks Assistant for code generation, debugging, and SQL authoring.",
-                    impact="AI Assistant can dramatically increase developer productivity.",
-                    priority="low",
-                    docs_url="https://docs.databricks.com/en/notebooks/use-databricks-assistant.html"))
-
-        nc = [{"user": r.get("initiated_by",""), "events_30d": r.get("events",0)} for r in rows[:20]]
-
-        # If >100 users, excellent; >20, good
-        if total_users >= 100: score, status = 100, "pass"
-        elif total_users >= 20: score, status = 50, "partial"
-        else: score, status = 0, "fail"
-
-        rec = None
-        if score < 100:
-            rec = Recommendation(
-                action=f"{total_users} users are using Databricks Assistant ({total_events:,} events in 30d). Promote adoption to more team members.",
-                impact="AI Assistant accelerates development through code generation, debugging, and natural language querying.",
-                priority="low",
-                docs_url="https://docs.databricks.com/en/notebooks/use-databricks-assistant.html")
-
-        return CheckResult("12.3.1", "Databricks Assistant adoption",
-            "AI Assistant Adoption", score, status,
-            f"{total_users} users, {total_events:,} events in 30 days",
-            "Active Assistant usage across team",
-            details={"non_conforming": nc}, recommendation=rec)
-
-    # ── Deployment Practices (merged from CI/CD) ─────────────────────
 
     def check_12_4_1_manual_runs(self) -> CheckResult:
         """Merged from CI/CD section: Jobs triggered manually vs automated."""

@@ -3,8 +3,8 @@ from checks.base import BaseCheckRunner, CheckResult, Recommendation
 
 
 class CICDCheckRunner(BaseCheckRunner):
-    section_id = "cicd"
-    section_name = "CI/CD & DevOps"
+    section_id = "data_engineering"
+    section_name = "Data Engineering"
     section_type = "advisory"
     icon = "git-branch"
 

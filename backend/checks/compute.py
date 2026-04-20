@@ -308,8 +308,8 @@ class ComputeCheckRunner(BaseCheckRunner):
         photon = next((r["dbus"] for r in rows if r["compute_type"] == "Photon"), 0) or 0
         total = sum((r["dbus"] or 0) for r in rows)
         rate = photon / max(total, 1) * 100
-        if rate >= 50: score, status = 100, "pass"
-        elif rate >= 20: score, status = 50, "partial"
+        if rate >= 20: score, status = 100, "pass"
+        elif rate >= 10: score, status = 50, "partial"
         else: score, status = 0, "fail"
 
         sku_detail = self.executor.execute("""
@@ -330,7 +330,7 @@ class ComputeCheckRunner(BaseCheckRunner):
                 priority="medium",
                 docs_url="https://docs.databricks.com/en/compute/photon.html")
         return CheckResult("3.5.1", "Photon adoption (30d)", "Resource Utilization",
-            score, status, f"{rate:.1f}% of compute DBUs ({photon:,.0f}/{total:,.0f})", "≥50% Photon",
+            score, status, f"{rate:.1f}% of compute DBUs ({photon:,.0f}/{total:,.0f})", "≥20% Photon",
             details={"sku_breakdown": nc}, recommendation=rec)
 
     # ── 3.6 Compute Utilization (Node-Level) ─────────────────────────

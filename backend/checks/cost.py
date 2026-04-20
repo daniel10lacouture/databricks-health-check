@@ -17,54 +17,6 @@ class CostCheckRunner(BaseCheckRunner):
 
     # ── 4.1 Spend Analysis ────────────────────────────────────────────
 
-    def check_4_1_1_mom_spend_trend(self) -> CheckResult:
-        """Month-over-month spend trend — flag >30% spikes."""
-        rows = self.executor.execute("""
-            SELECT
-                date_trunc('month', usage_date) AS month,
-                SUM(u.usage_quantity * lp.pricing.default) AS total_cost
-            FROM system.billing.usage u
-            LEFT JOIN system.billing.list_prices lp
-                ON u.cloud = lp.cloud AND u.sku_name = lp.sku_name
-                AND u.usage_date >= lp.price_start_time
-                AND (lp.price_end_time IS NULL OR u.usage_date < lp.price_end_time)
-            WHERE u.usage_date >= DATEADD(DAY, -180, CURRENT_DATE())
-            GROUP BY 1 ORDER BY 1
-        """)
-        if len(rows) < 2:
-            return CheckResult("4.1.1", "Month-over-month spend trend",
-                "Spend Analysis", 100, "pass",
-                "Insufficient data for trend analysis", "No unexpected spikes >30%",
-                details={"non_conforming": [{"summary": "Less than 2 months of billing data available."}]})
-
-        nc = []
-        max_spike = 0
-        spike_month = None
-        for i in range(1, len(rows)):
-            prev = float(rows[i-1].get("total_cost", 0) or 0)
-            curr = float(rows[i].get("total_cost", 0) or 0)
-            change = ((curr - prev) / prev * 100) if prev > 0 else 0
-            month_str = str(rows[i].get("month", ""))[:7]
-            nc.append({"month": month_str, "cost": round(curr, 2), "prev_cost": round(prev, 2),
-                       "change_pct": round(change, 1)})
-            if change > max_spike:
-                max_spike = change
-                spike_month = month_str
-
-        if max_spike > 30:
-            return CheckResult("4.1.1", "Month-over-month spend trend",
-                "Spend Analysis", 0, "fail",
-                f"{max_spike:.0f}% spike in {spike_month}", "No unexpected spikes >30%",
-                details={"non_conforming": nc},
-                recommendation=Recommendation(
-                    action=f"Investigate the {max_spike:.0f}% spend spike in {spike_month}. Check for new workloads, misconfigured auto-scaling, or runaway jobs.",
-                    impact="Unexpected spikes may indicate waste or misconfigurations.",
-                    priority="high",
-                    docs_url="https://docs.databricks.com/en/admin/system-tables/billing.html"))
-        return CheckResult("4.1.1", "Month-over-month spend trend",
-            "Spend Analysis", 100, "pass",
-            f"Max MoM change: {max_spike:.0f}%", "No unexpected spikes >30%",
-            details={"non_conforming": nc, "summary": "Monthly spend trend is stable."})
 
     def check_4_1_2_allpurpose_vs_job(self) -> CheckResult:
         """All-purpose vs. job compute spend ratio."""
@@ -503,61 +455,6 @@ class CostCheckRunner(BaseCheckRunner):
 
     # ── 4.4 Cloud Infrastructure Cost ────────────────────────────────
 
-    def check_4_4_1_total_cost_with_infra(self) -> CheckResult:
-        """Compare DBU cost vs total cost including cloud infrastructure."""
-        try:
-            rows = self.executor.execute("""
-                WITH dbu_cost AS (
-                    SELECT ROUND(SUM(u.usage_quantity * COALESCE(lp.pricing.default, 0)), 2) AS total_dbu_cost
-                    FROM system.billing.usage u
-                    LEFT JOIN system.billing.list_prices lp
-                        ON u.sku_name = lp.sku_name
-                        AND u.usage_date >= lp.price_start_time
-                        AND (lp.price_end_time IS NULL OR u.usage_date < lp.price_end_time)
-                    WHERE u.usage_date >= DATEADD(DAY, -30, CURRENT_DATE())
-                ),
-                infra_cost AS (
-                    SELECT ROUND(SUM(cost), 2) AS total_infra_cost
-                    FROM system.billing.cloud_infra_cost
-                    WHERE usage_date >= DATEADD(DAY, -30, CURRENT_DATE())
-                )
-                SELECT d.total_dbu_cost, i.total_infra_cost,
-                       ROUND(d.total_dbu_cost + COALESCE(i.total_infra_cost, 0), 2) AS true_total,
-                       CASE WHEN (d.total_dbu_cost + COALESCE(i.total_infra_cost, 0)) > 0
-                            THEN ROUND(COALESCE(i.total_infra_cost, 0) / (d.total_dbu_cost + COALESCE(i.total_infra_cost, 0)) * 100, 1)
-                            ELSE 0 END AS infra_pct
-                FROM dbu_cost d, infra_cost i
-            """)
-        except Exception as e:
-            return CheckResult("4.4.1", "Total cost incl. cloud infra (30d)", "Cloud Infrastructure Cost",
-                0, "not_evaluated", f"Could not query cloud_infra_cost: {str(e)[:80]}", "N/A")
-
-        if not rows:
-            return CheckResult("4.4.1", "Total cost incl. cloud infra (30d)", "Cloud Infrastructure Cost",
-                None, "info", "No cloud infrastructure cost data available", "Track true total cost",
-                recommendation=Recommendation(
-                    action="Enable cloud_infra_cost system table to understand true total cost beyond DBUs.",
-                    impact="Cloud VM/storage costs often add 30-60% on top of DBU spend — tracking both gives the full picture.",
-                    priority="medium"))
-
-        r = rows[0]
-        dbu = float(r.get("total_dbu_cost", 0) or 0)
-        infra = float(r.get("total_infra_cost", 0) or 0)
-        total = float(r.get("true_total", 0) or 0)
-        infra_pct = float(r.get("infra_pct", 0) or 0)
-
-        score, status = (None, "info")
-        nc = [{"dbu_cost": f"${dbu:,.2f}", "infra_cost": f"${infra:,.2f}",
-               "true_total": f"${total:,.2f}", "infra_percent": f"{infra_pct:.1f}%"}]
-
-        rec = Recommendation(
-            action=f"Cloud infra is {infra_pct:.1f}% of total spend (${infra:,.0f}/${total:,.0f}). Review VM sizing and storage to optimize the non-DBU portion.",
-            impact="Understanding true total cost enables more accurate budgeting and identifies cloud-layer optimization opportunities.",
-            priority="medium" if infra_pct > 40 else "low",
-            docs_url="https://docs.databricks.com/en/admin/system-tables/billing.html")
-        return CheckResult("4.4.1", "Total cost incl. cloud infra (30d)", "Cloud Infrastructure Cost",
-            score, status, f"${total:,.0f} total (${dbu:,.0f} DBU + ${infra:,.0f} infra, {infra_pct:.1f}% cloud)",
-            "Track true total cost", details={"non_conforming": nc}, recommendation=rec)
 
     def check_4_4_2_cost_by_product(self) -> CheckResult:
         """Break down cost by Databricks product (billing_origin_product)."""

@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 130 190" width="260" height="380">
+  <defs>
+    <linearGradient id="bg_data_storage_gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1B2D45"/>
+      <stop offset="100%" stop-color="#0D1B2A"/>
+    </linearGradient>
+    <linearGradient id="hdr_data_storage_gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#243B5C"/>
+      <stop offset="100%" stop-color="#152238"/>
+    </linearGradient>
+    <linearGradient id="ban_data_storage_gold" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#E06A2E"/>
+      <stop offset="50%" stop-color="#FF8142"/>
+      <stop offset="100%" stop-color="#E06A2E"/>
+    </linearGradient>
+    <clipPath id="cl_data_storage_gold"><path d="M10,0 L120,0 C126,0 130,4 130,10 L130,135 L65,190 L0,135 L0,10 C0,4 4,0 10,0Z"/></clipPath>
+  </defs>
+
+  <!-- Shield body -->
+  <path d="M10,0 L120,0 C126,0 130,4 130,10 L130,135 L65,190 L0,135 L0,10 C0,4 4,0 10,0Z" fill="url(#bg_data_storage_gold)"/>
+
+  <!-- Header strip -->
+  <rect x="0" y="0" width="130" height="18" fill="url(#hdr_data_storage_gold)" clip-path="url(#cl_data_storage_gold)"/>
+  <!-- Mini Databricks-style logo mark -->
+  <g transform="translate(65,9)" opacity="0.5">
+    <rect x="-4" y="-4" width="3.5" height="3.5" rx="0.5" fill="white" opacity="0.7"/>
+    <rect x="1" y="-4" width="3.5" height="3.5" rx="0.5" fill="white" opacity="0.5"/>
+    <rect x="-4" y="1" width="3.5" height="3.5" rx="0.5" fill="white" opacity="0.5"/>
+    <rect x="1" y="1" width="3.5" height="3.5" rx="0.5" fill="white" opacity="0.35"/>
+  </g>
+  <line x1="0" y1="18" x2="130" y2="18" stroke="#FF8142" stroke-width="0.5" opacity="0.15"/>
+
+  <!-- Category band -->
+  <rect x="0" y="18" width="130" height="44" fill="url(#ban_data_storage_gold)" clip-path="url(#cl_data_storage_gold)"/>
+  <line x1="-20" y1="18" x2="24" y2="62" stroke="white" stroke-width="12" opacity="0.03"/><line x1="20" y1="18" x2="64" y2="62" stroke="white" stroke-width="12" opacity="0.03"/><line x1="60" y1="18" x2="104" y2="62" stroke="white" stroke-width="12" opacity="0.03"/><line x1="100" y1="18" x2="144" y2="62" stroke="white" stroke-width="12" opacity="0.03"/><line x1="140" y1="18" x2="184" y2="62" stroke="white" stroke-width="12" opacity="0.03"/>
+  <!-- Band edge highlights -->
+  <rect x="0" y="18" width="130" height="1" fill="white" opacity="0.12" clip-path="url(#cl_data_storage_gold)"/>
+  <rect x="0" y="61" width="130" height="1" fill="black" opacity="0.15" clip-path="url(#cl_data_storage_gold)"/>
+  <!-- Category text -->
+  <text x="65.0" y="38" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="14" font-weight="800" fill="white" letter-spacing="2.5">DATA</text>
+  <text x="65.0" y="54" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="14" font-weight="800" fill="white" letter-spacing="2.5">STORAGE</text>
+
+  <!-- Middle section: tier stars -->
+  <rect x="0" y="62" width="130" height="28" fill="#152238" clip-path="url(#cl_data_storage_gold)"/>
+  <line x1="25" y1="76.0" x2="35.0" y2="76.0" stroke="#FFD700" stroke-width="0.5" opacity="0.3"/>
+  <line x1="95.0" y1="76.0" x2="105" y2="76.0" stroke="#FFD700" stroke-width="0.5" opacity="0.3"/>
+  <polygon points="47.0,70.5 48.2,74.3 52.2,74.3 49.0,76.6 50.2,80.4 47.0,78.1 43.8,80.4 45.0,76.6 41.8,74.3 45.8,74.3" fill="#FFD700"/><polygon points="65.0,69.5 66.5,74.0 71.2,74.0 67.3,76.8 68.8,81.3 65.0,78.5 61.2,81.3 62.7,76.8 58.8,74.0 63.5,74.0" fill="#FFD700"/><polygon points="83.0,70.5 84.2,74.3 88.2,74.3 85.0,76.6 86.2,80.4 83.0,78.1 79.8,80.4 81.0,76.6 77.8,74.3 81.8,74.3" fill="#FFD700"/>
+
+  <!-- Bottom decorative section -->
+  <rect x="0" y="90" width="130" height="105" fill="none" clip-path="url(#cl_data_storage_gold)"/>
+  
+    <rect x="10" y="94" width="8" height="8" fill="#FF8142" opacity="0.12"/>
+    <rect x="12" y="96" width="4" height="4" fill="#FF8142" opacity="0.08"/>
+    <rect x="112" y="94" width="8" height="8" fill="#FF8142" opacity="0.12"/>
+    <rect x="114" y="96" width="4" height="4" fill="#FF8142" opacity="0.08"/>
+    <rect x="10" y="106" width="5" height="5" fill="#FF8142" opacity="0.06"/>
+    <rect x="115" y="106" width="5" height="5" fill="#FF8142" opacity="0.06"/>
+  <path d="M10,98 Q32,94.0 55,98 Q78,102.0 100,98 Q112,94.0 120,98" fill="none" stroke="#FF8142" stroke-width="1.5" opacity="0.3"/><path d="M10,106 Q32,102.5 55,106 Q78,109.5 100,106 Q112,102.5 120,106" fill="none" stroke="#FF8142" stroke-width="1.35" opacity="0.26"/><path d="M10,114 Q32,111.0 55,114 Q78,117.0 100,114 Q112,111.0 120,114" fill="none" stroke="#FF8142" stroke-width="1.2" opacity="0.21999999999999997"/><path d="M10,122 Q32,119.5 55,122 Q78,124.5 100,122 Q112,119.5 120,122" fill="none" stroke="#FF8142" stroke-width="1.05" opacity="0.18"/><path d="M10,130 Q32,128.0 55,130 Q78,132.0 100,130 Q112,128.0 120,130" fill="none" stroke="#FF8142" stroke-width="0.9" opacity="0.13999999999999999"/>
+  
+    <circle cx="0" cy="117" r="8" fill="#FF8142" opacity="0.06"/>
+    <circle cx="130" cy="117" r="8" fill="#FF8142" opacity="0.06"/>
+    <circle cx="0" cy="129" r="5" fill="#FF8142" opacity="0.04"/>
+    <circle cx="130" cy="129" r="5" fill="#FF8142" opacity="0.04"/>
+  
+    <path d="M0,137 Q0,117 20,117" fill="#FF8142" opacity="0.08"/>
+    <path d="M130,137 Q130,117 110,117" fill="#FF8142" opacity="0.08"/>
+    <path d="M0,132 Q0,121 11,121" fill="#FF8142" opacity="0.05"/>
+    <path d="M130,132 Q130,121 119,121" fill="#FF8142" opacity="0.05"/>
+  
+    <circle cx="65" cy="121" r="12" fill="none" stroke="#FF8142" stroke-width="1" opacity="0.15"/>
+    <circle cx="65" cy="121" r="6" fill="none" stroke="#FF8142" stroke-width="0.8" opacity="0.12"/>
+    <circle cx="65" cy="121" r="2" fill="#FF8142" opacity="0.2"/>
+
+  <!-- Tier label -->
+  <text x="65.0" y="150" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="8.5" font-weight="700" fill="#FF8142" letter-spacing="3" opacity="0.5">GOLD</text>
+
+  <!-- Inner border trace -->
+  <path d="M14,4 L116,4 C121,4 126,9 126,14 L126,133 L65,184 L4,133 L4,14 C4,9 9,4 14,4Z" fill="none" stroke="#FF8142" stroke-width="0.4" opacity="0.1"/>
+
+  <!-- Bottom point accents -->
+  <circle cx="65.0" cy="168" r="2.5" fill="#FF8142" opacity="0.15"/>
+  <circle cx="65.0" cy="175" r="1.5" fill="#FF8142" opacity="0.1"/>
+</svg>

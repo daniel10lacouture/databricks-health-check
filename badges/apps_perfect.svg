@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 130" width="240" height="260">
+  <defs>
+    <linearGradient id="met_apps_perfect" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0%" stop-color="#DDD6FE"/>
+      <stop offset="30%" stop-color="#A78BFA"/>
+      <stop offset="60%" stop-color="#7C3AED"/>
+      <stop offset="100%" stop-color="#5B21B6"/>
+    </linearGradient>
+    <linearGradient id="rim_apps_perfect" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#DDD6FE"/>
+      <stop offset="40%" stop-color="#7C3AED"/>
+      <stop offset="100%" stop-color="#4C1D95"/>
+    </linearGradient>
+    <linearGradient id="face_apps_perfect" x1="0.3" y1="0" x2="0.7" y2="1">
+      <stop offset="0%" stop-color="#C4B5FD"/>
+      <stop offset="50%" stop-color="#9575F0"/>
+      <stop offset="100%" stop-color="#5B21B6"/>
+    </linearGradient>
+    <radialGradient id="gl_apps_perfect" cx="45%" cy="35%" r="50%">
+      <stop offset="0%" stop-color="#DDD6FE" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#7C3AED" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="bev_apps_perfect">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="1" result="blur"/>
+      <feSpecularLighting in="blur" surfaceScale="3" specularConstant="0.6" specularExponent="20" result="spec">
+        <fePointLight x="60" y="20" z="80"/>
+      </feSpecularLighting>
+      <feComposite in="spec" in2="SourceAlpha" operator="in" result="specOut"/>
+      <feComposite in="SourceGraphic" in2="specOut" operator="arithmetic" k1="0" k2="1" k3="0.3" k4="0"/>
+    </filter>
+    <filter id="sh_apps_perfect"><feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#3B0F80" flood-opacity="0.35"/></filter>
+    <filter id="emb_apps_perfect">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="0.5" result="blur"/>
+      <feOffset dy="0.8" result="off"/>
+      <feFlood flood-color="#DDD6FE" flood-opacity="0.4" result="color"/>
+      <feComposite in="color" in2="off" operator="in" result="shadow"/>
+      <feMerge><feMergeNode in="shadow"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <g filter="url(#sh_apps_perfect)">
+    <rect x="6" y="6" width="108" height="108" rx="24" fill="url(#met_apps_perfect)" stroke="url(#rim_apps_perfect)" stroke-width="3.5"/>
+    <rect x="14" y="14" width="92" height="92" rx="18" fill="url(#face_apps_perfect)" stroke="#5B21B6" stroke-width="0.5"/>
+    <rect x="14" y="14" width="92" height="92" rx="18" fill="url(#gl_apps_perfect)"/>
+  </g>
+  <circle cx="100.0" cy="60.0" r="1" fill="#DDD6FE" opacity="0.25"/><circle cx="99.0" cy="68.9" r="1" fill="#DDD6FE" opacity="0.25"/><circle cx="96.0" cy="77.4" r="1" fill="#DDD6FE" opacity="0.25"/><circle cx="91.3" cy="84.9" r="1" fill="#DDD6FE" opacity="0.25"/><circle cx="84.9" cy="91.3" r="1" fill="#DDD6FE" opacity="0.25"/><circle cx="77.4" cy="96.0" r="1" fill="#DDD6FE" opacity="0.25"/><circle cx="68.9" cy="99.0" r="1" fill="#DDD6FE" opacity="0.25"/><circle cx="60.0" cy="100.0" r="1" fill="#DDD6FE" opacity="0.25"/><circle cx="51.1" cy="99.0" r="1" fill="#DDD6FE" opacity="0.25"/><circle cx="42.6" cy="96.0" r="1" fill="#DDD6FE" opacity="0.25"/><circle cx="35.1" cy="91.3" r="1" fill="#DDD6FE" opacity="0.25"/><circle cx="28.7" cy="84.9" r="1" fill="#DDD6FE" opacity="0.25"/><circle cx="24.0" cy="77.4" r="1" fill="#DDD6FE" opacity="0.25"/><circle cx="21.0" cy="68.9" r="1" fill="#DDD6FE" opacity="0.25"/><circle cx="20.0" cy="60.0" r="1" fill="#DDD6FE" opacity="0.25"/><circle cx="21.0" cy="51.1" r="1" fill="#DDD6FE" opacity="0.25"/><circle cx="24.0" cy="42.6" r="1" fill="#DDD6FE" opacity="0.25"/><circle cx="28.7" cy="35.1" r="1" fill="#DDD6FE" opacity="0.25"/><circle cx="35.1" cy="28.7" r="1" fill="#DDD6FE" opacity="0.25"/><circle cx="42.6" cy="24.0" r="1" fill="#DDD6FE" opacity="0.25"/><circle cx="51.1" cy="21.0" r="1" fill="#DDD6FE" opacity="0.25"/><circle cx="60.0" cy="20.0" r="1" fill="#DDD6FE" opacity="0.25"/><circle cx="68.9" cy="21.0" r="1" fill="#DDD6FE" opacity="0.25"/><circle cx="77.4" cy="24.0" r="1" fill="#DDD6FE" opacity="0.25"/><circle cx="84.9" cy="28.7" r="1" fill="#DDD6FE" opacity="0.25"/><circle cx="91.3" cy="35.1" r="1" fill="#DDD6FE" opacity="0.25"/><circle cx="96.0" cy="42.6" r="1" fill="#DDD6FE" opacity="0.25"/><circle cx="99.0" cy="51.1" r="1" fill="#DDD6FE" opacity="0.25"/>
+  <g transform="translate(30,30)" filter="url(#emb_apps_perfect)">
+    <rect width="26" height="26" rx="6" fill="#5B21B6" opacity="0.7"/>
+    <rect x="30" width="26" height="26" rx="6" fill="#5B21B6" opacity="0.5"/>
+    <rect y="30" width="26" height="26" rx="6" fill="#5B21B6" opacity="0.5"/>
+    <rect x="30" y="30" width="26" height="26" rx="6" fill="#5B21B6" opacity="0.3"/>
+    <rect x="1.5" y="1.5" width="23" height="23" rx="5" fill="none" stroke="#DDD6FE" stroke-width="0.5" opacity="0.35"/>
+    <rect x="31.5" y="1.5" width="23" height="23" rx="5" fill="none" stroke="#DDD6FE" stroke-width="0.5" opacity="0.25"/>
+    <rect x="1.5" y="31.5" width="23" height="23" rx="5" fill="none" stroke="#DDD6FE" stroke-width="0.5" opacity="0.25"/>
+    <rect x="31.5" y="31.5" width="23" height="23" rx="5" fill="none" stroke="#DDD6FE" stroke-width="0.5" opacity="0.15"/>
+  </g>
+  <text x="60" y="127" text-anchor="middle" font-family="Georgia,'Times New Roman',serif" font-size="10" font-weight="700" fill="#3B0F80" letter-spacing="2.5" opacity="0.8">PERFECT</text>
+</svg>
