@@ -64,6 +64,23 @@ databricks apps create account-health-check \
   --source-code-path /Workspace/Users/<your-email>/databricks-health-check
 ```
 
+### Step 2b: Configure User Authorization Scopes
+
+After creating the app, go to the app's **Settings → User authorization** and add these four scopes:
+
+| Scope | Description |
+| --- | --- |
+| `sql` | Allow the app to execute SQL and manage SQL related resources |
+| `catalog.tables:read` | Allows the app to read tables in Unity Catalog |
+| `catalog.catalogs:read` | Allows the app to read catalogs in Unity Catalog |
+| `catalog.schemas:read` | Allows the app to read schemas in Unity Catalog |
+
+**To add scopes:** Click **"+ Add scope"** and add each one. Users will be prompted to consent to these scopes the first time they open the app.
+
+> **Without these scopes, the app will fail with SQL permission errors when running the health check.**
+
+---
+
 ### Step 3: Deploy
 
 ```bash
@@ -181,6 +198,7 @@ databricks-health-check/
 | **Checks show "N/A"** | The required system table may not be enabled, or the app service principal lacks permissions. Check the drill-down for specific guidance. |
 | **"Requires workspace admin permissions"** | Grant the app's service principal Workspace Admin role (Admin Settings → Service Principals). |
 | **Score seems low** | Sections are only scored when active. Unused features (e.g., Delta Sharing) won't penalize your score. Click into each section to see which checks need attention. |
+| **SQL permission errors when running health check** | Go to the app Settings → User authorization and add all four required scopes (`sql`, `catalog.tables:read`, `catalog.catalogs:read`, `catalog.schemas:read`). Users must consent on first use. |
 | **App deployment fails** | Verify the source code path is correct and the workspace has Databricks Apps enabled. Check the deployment logs in the Apps UI. |
 | **Queries time out** | Use a larger warehouse or enable auto-scaling. The health check runs 200+ queries in parallel; a Small warehouse may queue them. |
 

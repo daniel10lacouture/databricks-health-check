@@ -157,7 +157,7 @@ class QueryExecutor:
                     "warehouse_id": self.warehouse_id,
                     "statement": query.strip(),
                     "wait_timeout": "30s",
-                    "disposition": "INLINE",
+                    "disposition": "EXTERNAL_LINKS",
                     "format": "JSON_ARRAY",
                 },
                 timeout=timeout + 30,
@@ -194,7 +194,38 @@ class QueryExecutor:
             schema_cols = manifest.get("schema", {}).get("columns", [])
             columns = [col["name"] for col in schema_cols]
             col_types = [col.get("type_name", "STRING") for col in schema_cols]
-            data_array = result_data.get("result", {}).get("data_array", [])
+
+            # Handle both INLINE and EXTERNAL_LINKS responses
+            result_obj = result_data.get("result", {})
+            data_array = result_obj.get("data_array")
+            if data_array is None:
+                # EXTERNAL_LINKS: fetch data from external URL
+                data_array = []
+                ext_links = result_obj.get("external_links", [])
+                for link_info in ext_links:
+                    ext_url = link_info.get("external_link")
+                    if ext_url:
+                        chunk_resp = requests.get(ext_url, timeout=60)
+                        if chunk_resp.status_code == 200:
+                            chunk_data = chunk_resp.json()
+                            if isinstance(chunk_data, list):
+                                data_array.extend(chunk_data)
+                            elif isinstance(chunk_data, dict):
+                                data_array.extend(chunk_data.get("data_array", []))
+                    # Handle pagination via next_chunk_internal_link
+                    next_link = link_info.get("next_chunk_internal_link")
+                    while next_link:
+                        nr = requests.get(
+                            f"{self.host}{next_link}",
+                            headers={"Authorization": f"Bearer {self.token}"},
+                            timeout=60)
+                        if nr.status_code != 200:
+                            break
+                        nd = nr.json()
+                        chunk = nd.get("data_array") or nd.get("result", {}).get("data_array", [])
+                        data_array.extend(chunk)
+                        ext = nd.get("external_links", [{}])
+                        next_link = ext[0].get("next_chunk_internal_link") if ext else None
             
             def _convert(val, type_name):
                 if val is None:
