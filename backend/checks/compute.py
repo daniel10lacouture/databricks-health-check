@@ -19,12 +19,8 @@ class ComputeCheckRunner(BaseCheckRunner):
     # ── 3.1 Cluster Configuration ────────────────────────────────────
 
     def check_3_1_1_auto_termination(self) -> CheckResult:
-        try:
-            rows = self.executor.execute(f"""
-                SELECT cluster_id, cluster_name, auto_termination_minutes, cluster_source
-                FROM system.compute.clusters
-                WHERE delete_time IS NULL AND {INTERACTIVE_FILTER}""")
-        except Exception:
+        rows = self.get_clusters(filter_fn=lambda r: r.get("cluster_source") in ("UI", "API"))
+        if not rows:
             return CheckResult("3.1.1", "Auto-termination enabled",
                 "Cluster Configuration", 0, "not_evaluated",
                 "Could not query clusters", "All interactive clusters have auto-termination")
@@ -55,13 +51,9 @@ class ComputeCheckRunner(BaseCheckRunner):
             details={"non_conforming": nc, "total_interactive": total}, recommendation=rec)
 
     def check_3_1_2_auto_termination_value(self) -> CheckResult:
-        try:
-            rows = self.executor.execute(f"""
-                SELECT cluster_id, cluster_name, auto_termination_minutes
-                FROM system.compute.clusters
-                WHERE delete_time IS NULL AND {INTERACTIVE_FILTER}
-                  AND auto_termination_minutes > 0""")
-        except Exception:
+        rows = self.get_clusters(filter_fn=lambda r: r.get("cluster_source") in ("UI", "API")
+                                 and (r.get("auto_termination_minutes") or 0) > 0)
+        if not rows:
             return CheckResult("3.1.2", "Auto-termination value reasonable",
                 "Cluster Configuration", 0, "not_evaluated", "Could not query", "<=60 min")
         long = [r for r in rows if (r.get("auto_termination_minutes", 0) or 0) > 60]
@@ -88,12 +80,8 @@ class ComputeCheckRunner(BaseCheckRunner):
             details={"non_conforming": nc}, recommendation=rec)
 
     def check_3_1_3_autoscaling(self) -> CheckResult:
-        try:
-            rows = self.executor.execute(f"""
-                SELECT cluster_id, cluster_name, min_autoscale_workers, max_autoscale_workers, worker_count
-                FROM system.compute.clusters
-                WHERE delete_time IS NULL AND {INTERACTIVE_FILTER}""")
-        except Exception:
+        rows = self.get_clusters(filter_fn=lambda r: r.get("cluster_source") in ("UI", "API"))
+        if not rows:
             return CheckResult("3.1.3", "Autoscaling enabled",
                 "Cluster Configuration", 0, "not_evaluated", "Could not query", ">50% autoscaling")
         total = len(rows) or 1
@@ -126,14 +114,9 @@ class ComputeCheckRunner(BaseCheckRunner):
             ">50% autoscaling", details={"non_conforming": nc}, recommendation=rec)
 
     def check_3_1_6_lts_runtime(self) -> CheckResult:
-        try:
-            rows = self.executor.execute(f"""
-                SELECT cluster_id, cluster_name, dbr_version,
-                  REGEXP_EXTRACT(dbr_version, '^(\\\\d+\\\\.\\\\d+)', 1) AS major_ver
-                FROM system.compute.clusters
-                WHERE delete_time IS NULL AND {INTERACTIVE_FILTER}
-                  AND dbr_version IS NOT NULL""")
-        except Exception:
+        rows = self.get_clusters(filter_fn=lambda r: r.get("cluster_source") in ("UI", "API")
+                                 and r.get("dbr_version") is not None)
+        if not rows:
             return CheckResult("3.1.6", "Supported runtime versions",
                 "Cluster Configuration", 0, "not_evaluated", "Could not query", "All on supported versions")
         total = len(rows) or 1
@@ -166,12 +149,8 @@ class ComputeCheckRunner(BaseCheckRunner):
     # ── 3.2 Compute Policies ────────────────────────────────────────
 
     def check_3_2_1_policy_coverage(self) -> CheckResult:
-        try:
-            rows = self.executor.execute(f"""
-                SELECT cluster_id, cluster_name, policy_id
-                FROM system.compute.clusters
-                WHERE delete_time IS NULL AND {INTERACTIVE_FILTER}""")
-        except Exception:
+        rows = self.get_clusters(filter_fn=lambda r: r.get("cluster_source") in ("UI", "API"))
+        if not rows:
             return CheckResult("3.2.1", "Cluster policy coverage",
                 "Compute Policies", 0, "not_evaluated", "Could not query", ">80% policy-governed")
         total = len(rows) or 1
@@ -296,32 +275,22 @@ class ComputeCheckRunner(BaseCheckRunner):
     # ── Tier 1: Photon Adoption ──────────────────────────────────────
 
     def check_3_5_1_photon_adoption(self):
-        """Tier 1: Only 0.3% of DBUs use Photon."""
-        rows = self.executor.execute("""
-            SELECT CASE WHEN sku_name LIKE '%PHOTON%' THEN 'Photon' ELSE 'Non-Photon' END AS compute_type,
-                   ROUND(SUM(usage_quantity), 0) AS dbus
-            FROM system.billing.usage
-            WHERE usage_date >= DATEADD(DAY, -30, CURRENT_DATE())
-              AND (sku_name LIKE '%ALL_PURPOSE%' OR sku_name LIKE '%JOBS%' OR sku_name LIKE '%SQL%')
-            GROUP BY 1
-        """)
-        photon = next((r["dbus"] for r in rows if r["compute_type"] == "Photon"), 0) or 0
-        total = sum((r["dbus"] or 0) for r in rows)
+        """Tier 1: Photon adoption rate."""
+        billing = self.get_billing()
+        compute_billing = [r for r in billing if any(k in r.get("sku_name","").upper() for k in ["ALL_PURPOSE","JOBS","SQL"])]
+        if not compute_billing:
+            return CheckResult("3.5.1", "Photon adoption (30d)", "Resource Utilization",
+                0, "not_evaluated", "No billing data", "≥20% Photon")
+        photon = sum(float(r.get("dbus", 0) or 0) for r in compute_billing if "PHOTON" in r.get("sku_name","").upper())
+        total = sum(float(r.get("dbus", 0) or 0) for r in compute_billing)
         rate = photon / max(total, 1) * 100
         if rate >= 20: score, status = 100, "pass"
         elif rate >= 10: score, status = 50, "partial"
         else: score, status = 0, "fail"
-
-        sku_detail = self.executor.execute("""
-            SELECT sku_name,
-                   ROUND(SUM(usage_quantity), 0) AS dbus,
-                   CASE WHEN sku_name LIKE '%PHOTON%' THEN 'Photon' ELSE 'Standard' END AS engine
-            FROM system.billing.usage
-            WHERE usage_date >= DATEADD(DAY, -30, CURRENT_DATE())
-              AND (sku_name LIKE '%ALL_PURPOSE%' OR sku_name LIKE '%JOBS%' OR sku_name LIKE '%SQL%')
-            GROUP BY 1 ORDER BY dbus DESC LIMIT 15
-        """)
-        nc = sku_detail if sku_detail else [{"status": f"Photon: {rate:.1f}%"}]
+        nc = [{"sku_name": r.get("sku_name",""), "dbus": round(float(r.get("dbus",0) or 0)),
+               "engine": r.get("engine","")} for r in compute_billing if float(r.get("dbus",0) or 0) > 0]
+        nc.sort(key=lambda x: -x.get("dbus", 0))
+        nc = nc[:15]
         rec = None
         if score < 100:
             rec = Recommendation(

@@ -48,25 +48,36 @@ def _trend_direction(values: list[float]) -> str:
     return "stable"
 
 def compute_trends(executor) -> dict:
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    trend_queries = {
+        "cost": "SELECT date_trunc('week', usage_date) AS week, ROUND(SUM(usage_quantity), 0) AS weekly_dbus FROM system.billing.usage WHERE usage_date >= DATEADD(WEEK, -12, CURRENT_DATE()) GROUP BY 1 ORDER BY 1",
+        "query_performance": "SELECT date_trunc('week', start_time) AS week, ROUND(PERCENTILE_APPROX(total_duration_ms/1000.0, 0.5), 2) AS p50_sec, ROUND(PERCENTILE_APPROX(total_duration_ms/1000.0, 0.95), 2) AS p95_sec, COUNT(*) AS query_count FROM system.query.history WHERE start_time >= DATEADD(WEEK, -12, CURRENT_DATE()) AND statement_type IN ('SELECT','INSERT','MERGE','UPDATE','DELETE') GROUP BY 1 ORDER BY 1",
+        "job_failures": "SELECT date_trunc('week', period_start_time) AS week, COUNT(*) AS total_runs, SUM(CASE WHEN result_state IN ('FAILED','TIMEDOUT') THEN 1 ELSE 0 END) AS failures, ROUND(SUM(CASE WHEN result_state IN ('FAILED','TIMEDOUT') THEN 1 ELSE 0 END)*100.0/COUNT(*), 1) AS failure_rate FROM system.lakeflow.job_run_timeline WHERE period_start_time >= DATEADD(WEEK, -12, CURRENT_DATE()) GROUP BY 1 ORDER BY 1",
+    }
+    raw = {}
+    def _fetch(kv):
+        key, sql = kv
+        try:
+            return key, executor.execute(sql)
+        except Exception as e:
+            logger.warning(f"{key} trend failed: {e}")
+            return key, []
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        for key, rows in pool.map(_fetch, trend_queries.items()):
+            raw[key] = rows
     trends = {}
-    try:
-        rows = executor.execute("SELECT date_trunc('week', usage_date) AS week, ROUND(SUM(usage_quantity), 0) AS weekly_dbus FROM system.billing.usage WHERE usage_date >= DATEADD(WEEK, -12, CURRENT_DATE()) GROUP BY 1 ORDER BY 1")
-        if rows:
-            values = [float(r.get("weekly_dbus", 0) or 0) for r in rows]
-            trends["cost"] = {"data": [{"week": str(r.get("week",""))[:10], "value": float(r.get("weekly_dbus",0) or 0)} for r in rows], "direction": _trend_direction(values), "label": "Weekly DBU Spend", "unit": "DBUs"}
-    except Exception as e: logger.warning(f"Cost trend failed: {e}")
-    try:
-        rows = executor.execute("SELECT date_trunc('week', start_time) AS week, ROUND(PERCENTILE_APPROX(total_duration_ms/1000.0, 0.5), 2) AS p50_sec, ROUND(PERCENTILE_APPROX(total_duration_ms/1000.0, 0.95), 2) AS p95_sec, COUNT(*) AS query_count FROM system.query.history WHERE start_time >= DATEADD(WEEK, -12, CURRENT_DATE()) AND statement_type IN ('SELECT','INSERT','MERGE','UPDATE','DELETE') GROUP BY 1 ORDER BY 1")
-        if rows:
-            values = [float(r.get("p95_sec", 0) or 0) for r in rows]
-            trends["query_performance"] = {"data": [{"week": str(r.get("week",""))[:10], "p50_sec": float(r.get("p50_sec",0) or 0), "p95_sec": float(r.get("p95_sec",0) or 0), "query_count": int(r.get("query_count",0) or 0)} for r in rows], "direction": _trend_direction(values), "label": "Query Latency (P95)", "unit": "seconds"}
-    except Exception as e: logger.warning(f"Query perf trend failed: {e}")
-    try:
-        rows = executor.execute("SELECT date_trunc('week', period_start_time) AS week, COUNT(*) AS total_runs, SUM(CASE WHEN result_state IN ('FAILED','TIMEDOUT') THEN 1 ELSE 0 END) AS failures, ROUND(SUM(CASE WHEN result_state IN ('FAILED','TIMEDOUT') THEN 1 ELSE 0 END)*100.0/COUNT(*), 1) AS failure_rate FROM system.lakeflow.job_run_timeline WHERE period_start_time >= DATEADD(WEEK, -12, CURRENT_DATE()) GROUP BY 1 ORDER BY 1")
-        if rows:
-            values = [float(r.get("failure_rate", 0) or 0) for r in rows]
-            trends["job_failures"] = {"data": [{"week": str(r.get("week",""))[:10], "total_runs": int(r.get("total_runs",0) or 0), "failures": int(r.get("failures",0) or 0), "failure_rate": float(r.get("failure_rate",0) or 0)} for r in rows], "direction": _trend_direction(values), "label": "Job Failure Rate", "unit": "%"}
-    except Exception as e: logger.warning(f"Job failure trend failed: {e}")
+    if raw.get("cost"):
+        rows = raw["cost"]
+        values = [float(r.get("weekly_dbus", 0) or 0) for r in rows]
+        trends["cost"] = {"data": [{"week": str(r.get("week",""))[:10], "value": float(r.get("weekly_dbus",0) or 0)} for r in rows], "direction": _trend_direction(values), "label": "Weekly DBU Spend", "unit": "DBUs"}
+    if raw.get("query_performance"):
+        rows = raw["query_performance"]
+        values = [float(r.get("p95_sec", 0) or 0) for r in rows]
+        trends["query_performance"] = {"data": [{"week": str(r.get("week",""))[:10], "p50_sec": float(r.get("p50_sec",0) or 0), "p95_sec": float(r.get("p95_sec",0) or 0), "query_count": int(r.get("query_count",0) or 0)} for r in rows], "direction": _trend_direction(values), "label": "Query Latency (P95)", "unit": "seconds"}
+    if raw.get("job_failures"):
+        rows = raw["job_failures"]
+        values = [float(r.get("failure_rate", 0) or 0) for r in rows]
+        trends["job_failures"] = {"data": [{"week": str(r.get("week",""))[:10], "total_runs": int(r.get("total_runs",0) or 0), "failures": int(r.get("failures",0) or 0), "failure_rate": float(r.get("failure_rate",0) or 0)} for r in rows], "direction": _trend_direction(values), "label": "Job Failure Rate", "unit": "%"}
     return trends
 
 def detect_anomalies(executor) -> list[dict]:
@@ -118,12 +129,18 @@ def compute_whatif_scenarios(section_results: list[dict], executor) -> list[dict
     return scenarios
 
 def generate_all_insights(overall_score: Optional[float], section_results: list[dict], executor) -> dict:
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     t0 = time.time()
-    logger.info("Generating insights...")
+    logger.info("Generating insights (parallel)...")
     maturity = compute_maturity(overall_score, section_results)
-    trends = compute_trends(executor)
-    anomalies = detect_anomalies(executor)
-    whatif = compute_whatif_scenarios(section_results, executor)
+    # Run trends, anomalies, whatif all in parallel
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        f_trends = pool.submit(compute_trends, executor)
+        f_anomalies = pool.submit(detect_anomalies, executor)
+        f_whatif = pool.submit(compute_whatif_scenarios, section_results, executor)
+        trends = f_trends.result()
+        anomalies = f_anomalies.result()
+        whatif = f_whatif.result()
     elapsed = round(time.time() - t0, 1)
-    logger.info(f"Insights generated in {elapsed}s")
+    logger.info(f"Insights generated in {elapsed}s (parallel)")
     return {"maturity": maturity, "trends": trends, "anomalies": anomalies, "whatif_scenarios": whatif, "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}

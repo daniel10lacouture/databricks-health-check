@@ -93,7 +93,7 @@ def push_event(event: dict):
 
 
 # ── Section registry ─────────────────────────────────────────────────
-def get_runners(executor, api_client, include_table_analysis):
+def get_runners(executor, api_client, include_table_analysis, prefetch_data=None):
     from checks.cost import CostCheckRunner
     from checks.sql_analytics import SQLAnalyticsCheckRunner
     from checks.security import SecurityCheckRunner
@@ -111,21 +111,21 @@ def get_runners(executor, api_client, include_table_analysis):
     from checks.genie_code import GenieCodeCheckRunner
 
     return [
-        DataEngineeringCheckRunner(executor, api_client, include_table_analysis),
-        SQLAnalyticsCheckRunner(executor, api_client, include_table_analysis),
-        ComputeCheckRunner(executor, api_client, include_table_analysis),
-        CostCheckRunner(executor, api_client, include_table_analysis),
-        SecurityCheckRunner(executor, api_client, include_table_analysis),
-        GovernanceCheckRunner(executor, api_client, include_table_analysis),
-        AIMLCheckRunner(executor, api_client, include_table_analysis),
-        BIToolingCheckRunner(executor, api_client, include_table_analysis),
-        AppsCheckRunner(executor, api_client, include_table_analysis),
-        LakebaseCheckRunner(executor, api_client, include_table_analysis),
-        DeltaSharingCheckRunner(executor, api_client, include_table_analysis),
-        WorkspaceAdminCheckRunner(executor, api_client, include_table_analysis),
-        AdoptionCheckRunner(executor, api_client, include_table_analysis),
-        GenieCodeCheckRunner(executor, api_client, include_table_analysis),
-        DataStorageCheckRunner(executor, api_client, include_table_analysis),
+        DataEngineeringCheckRunner(executor, api_client, include_table_analysis, prefetch_data),
+        SQLAnalyticsCheckRunner(executor, api_client, include_table_analysis, prefetch_data),
+        ComputeCheckRunner(executor, api_client, include_table_analysis, prefetch_data),
+        CostCheckRunner(executor, api_client, include_table_analysis, prefetch_data),
+        SecurityCheckRunner(executor, api_client, include_table_analysis, prefetch_data),
+        GovernanceCheckRunner(executor, api_client, include_table_analysis, prefetch_data),
+        AIMLCheckRunner(executor, api_client, include_table_analysis, prefetch_data),
+        BIToolingCheckRunner(executor, api_client, include_table_analysis, prefetch_data),
+        AppsCheckRunner(executor, api_client, include_table_analysis, prefetch_data),
+        LakebaseCheckRunner(executor, api_client, include_table_analysis, prefetch_data),
+        DeltaSharingCheckRunner(executor, api_client, include_table_analysis, prefetch_data),
+        WorkspaceAdminCheckRunner(executor, api_client, include_table_analysis, prefetch_data),
+        AdoptionCheckRunner(executor, api_client, include_table_analysis, prefetch_data),
+        GenieCodeCheckRunner(executor, api_client, include_table_analysis, prefetch_data),
+        DataStorageCheckRunner(executor, api_client, include_table_analysis, prefetch_data),
     ]
 
 
@@ -354,17 +354,20 @@ def _compute_burn_rate(section_results: list) -> dict:
 
 # ── Background health-check runner ───────────────────────────────────
 def run_health_check(warehouse_id: str, include_table_analysis: bool, user_token: str = ""):
-    from checks.base import QueryExecutor, APIClient
+    from checks.base import QueryExecutor, APIClient, DataPrefetcher
     from scoring import compute_overall_score
     from recommendations import get_top_recommendations
-    from insights import generate_all_insights
     from genai_insights import GenAIInsights
 
     try:
         token = user_token or get_token()
         executor = QueryExecutor(get_host().replace("https://", ""), token, warehouse_id)
         api_client = APIClient()
-        runners = get_runners(executor, api_client, include_table_analysis)
+        # Prefetch disabled (check files use their own queries)
+        prefetch_data = None
+        push_event({"type": "progress", "message": "Prefetch complete, running checks..."})
+
+        runners = get_runners(executor, api_client, include_table_analysis, prefetch_data)
         total = len(runners)
         section_results = [None] * total
         completed_count = 0
@@ -397,6 +400,43 @@ def run_health_check(warehouse_id: str, include_table_analysis: bool, user_token
             logger.info(f"  -> {runner.section_name} completed in {elapsed}s, score={result.score}")
             return idx, runner, result, elapsed
 
+        # PERF: Fire wrapped queries + insights EARLY (overlap with section checks)
+        # These are independent SQL queries that don't need section results
+        # Pillars 2+6: Run insights and wrapped stats IN PARALLEL (perf fix)
+        logger.info("Starting insights + wrapped stats in parallel...")
+        push_event({"type": "progress", "section": "wrapped", "name": "Account Intelligence"})
+
+        # Fire trend + anomaly queries early (no dependency on section_results)
+        from concurrent.futures import ThreadPoolExecutor as TPE2, Future
+        from insights import compute_trends, detect_anomalies
+        _early_pool = TPE2(max_workers=2)
+        _trends_future = _early_pool.submit(compute_trends, executor)
+        _anomalies_future = _early_pool.submit(detect_anomalies, executor)
+
+        wrapped_queries = {
+            "query_volume": "SELECT COUNT(*) AS total_queries, COUNT(DISTINCT executed_by) AS unique_users, COUNT(DISTINCT DATE(start_time)) AS active_days FROM system.query.history WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE())",
+            "busiest_hour": "SELECT HOUR(start_time) AS hr, DAYOFWEEK(start_time) AS dow, COUNT(*) AS cnt FROM system.query.history WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE()) GROUP BY HOUR(start_time), DAYOFWEEK(start_time) ORDER BY cnt DESC LIMIT 1",
+            "top_users": "SELECT executed_by, COUNT(*) AS queries FROM system.query.history WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE()) AND executed_by IS NOT NULL GROUP BY executed_by ORDER BY queries DESC LIMIT 5",
+            "total_dbus": "SELECT ROUND(SUM(usage_quantity), 0) AS total_dbus, COUNT(DISTINCT usage_date) AS billing_days FROM system.billing.usage WHERE usage_date >= DATEADD(DAY, -30, CURRENT_DATE()) AND usage_unit = 'DBU'",
+            "workspace_count": "SELECT COUNT(*) AS total, COUNT(CASE WHEN status = 'RUNNING' THEN 1 END) AS active FROM system.access.workspaces_latest",
+            "data_volume": "SELECT COUNT(DISTINCT CONCAT(table_catalog,'.',table_schema,'.',table_name)) AS total_tables, COUNT(DISTINCT table_catalog) AS catalogs, COUNT(DISTINCT CONCAT(table_catalog,'.',table_schema)) AS schemas FROM system.information_schema.tables WHERE table_schema != 'information_schema' AND table_catalog != 'system'",
+            "job_stats": "SELECT COUNT(DISTINCT job_id) AS unique_jobs, COUNT(*) AS total_runs, ROUND(AVG(run_duration_seconds)/60.0, 1) AS avg_duration_min FROM system.lakeflow.job_run_timeline WHERE period_start_time >= DATEADD(DAY, -30, CURRENT_DATE()) AND run_type = 'JOB_RUN' AND result_state IS NOT NULL",
+            "ai_usage": "SELECT COUNT(*) AS ai_queries FROM system.query.history WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE()) AND (statement_text LIKE '%%ai_query%%' OR statement_text LIKE '%%ai_classify%%' OR statement_text LIKE '%%ai_extract%%' OR statement_text LIKE '%%ai_forecast%%')",
+        }
+        wrapped_stats = {}
+        def _run_wrapped(kv):
+            wkey, wsql = kv
+            try:
+                wrows = executor.execute(wsql, timeout=180)
+                return wkey, wrows[0] if wrows else {}
+            except Exception as we:
+                logger.warning(f"Wrapped query '{wkey}' failed: {we}")
+                return wkey, {}
+        with ThreadPoolExecutor(max_workers=8) as wpool:
+            for wkey, wval in wpool.map(_run_wrapped, wrapped_queries.items()):
+                wrapped_stats[wkey] = wval
+
+        
         with ThreadPoolExecutor(max_workers=12) as pool:
             futures = [pool.submit(run_section, (i, r)) for i, r in enumerate(runners)]
             for future in as_completed(futures):
@@ -465,13 +505,30 @@ def run_health_check(warehouse_id: str, include_table_analysis: bool, user_token
         overall = compute_overall_score(section_results)
         top_recs = get_top_recommendations(section_results, limit=10)
 
-        # Pillar 2: Generate insights (trends, anomalies, maturity, what-if)
+        # Pillar 4: Compute Score Booster (pure Python, instant)
+        score_booster = _compute_score_booster(overall, section_results)
+        burn_rate = _compute_burn_rate(section_results)
+
+        # Collect early-fired trend + anomaly results
         try:
-            insights_data = generate_all_insights(
-                overall.get("overall_score"), section_results, executor)
-        except Exception as ie:
-            logger.warning(f"Insights generation failed (non-blocking): {ie}")
-            insights_data = {}
+            trends = _trends_future.result(timeout=120)
+        except Exception as e:
+            logger.warning(f"Trends failed: {e}")
+            trends = {}
+        try:
+            anomalies = _anomalies_future.result(timeout=120)
+        except Exception as e:
+            logger.warning(f"Anomalies failed: {e}")
+            anomalies = []
+        _early_pool.shutdown(wait=False)
+
+        # Compute remaining insights that NEED section_results
+        from insights import compute_maturity, compute_whatif_scenarios
+        maturity = compute_maturity(overall.get("overall_score"), section_results)
+        whatif = compute_whatif_scenarios(section_results, executor)
+        import time as _t
+        insights_data = {"maturity": maturity, "trends": trends, "anomalies": anomalies,
+                         "whatif_scenarios": whatif, "generated_at": _t.strftime("%Y-%m-%dT%H:%M:%SZ", _t.gmtime())}
 
         # Pillar 3: Generate GenAI insights (non-blocking)
         ai_insights = {}
@@ -484,33 +541,6 @@ def run_health_check(warehouse_id: str, include_table_analysis: bool, user_token
         except Exception as ge:
             logger.warning(f"GenAI insights failed (non-blocking): {ge}")
             ai_insights = {"error": str(ge)}
-
-        # Pillar 4: Compute Score Booster (potential score from adoption opportunities)
-        score_booster = _compute_score_booster(overall, section_results)
-        burn_rate = _compute_burn_rate(section_results)
-
-
-        # Pillar 6: Wrapped Stats (Account Intelligence)
-        logger.info("Computing wrapped stats...")
-        push_event({"type": "progress", "section": "wrapped", "name": "Account Intelligence"})
-        wrapped_queries = {
-            "query_volume": "SELECT COUNT(*) AS total_queries, COUNT(DISTINCT executed_by) AS unique_users, COUNT(DISTINCT DATE(start_time)) AS active_days FROM system.query.history WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE())",
-            "busiest_hour": "SELECT HOUR(start_time) AS hr, DAYOFWEEK(start_time) AS dow, COUNT(*) AS cnt FROM system.query.history WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE()) GROUP BY HOUR(start_time), DAYOFWEEK(start_time) ORDER BY cnt DESC LIMIT 1",
-            "top_users": "SELECT executed_by, COUNT(*) AS queries FROM system.query.history WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE()) AND executed_by IS NOT NULL GROUP BY executed_by ORDER BY queries DESC LIMIT 5",
-            "total_dbus": "SELECT ROUND(SUM(usage_quantity), 0) AS total_dbus, COUNT(DISTINCT usage_date) AS billing_days FROM system.billing.usage WHERE usage_date >= DATEADD(DAY, -30, CURRENT_DATE()) AND usage_unit = 'DBU'",
-            "workspace_count": "SELECT COUNT(*) AS total, COUNT(CASE WHEN status = 'RUNNING' THEN 1 END) AS active FROM system.access.workspaces_latest",
-            "data_volume": "SELECT COUNT(DISTINCT CONCAT(table_catalog,'.',table_schema,'.',table_name)) AS total_tables, COUNT(DISTINCT table_catalog) AS catalogs, COUNT(DISTINCT CONCAT(table_catalog,'.',table_schema)) AS schemas FROM system.information_schema.tables WHERE table_schema != 'information_schema' AND table_catalog != 'system'",
-            "job_stats": "SELECT COUNT(DISTINCT job_id) AS unique_jobs, COUNT(*) AS total_runs, ROUND(AVG(run_duration_seconds)/60.0, 1) AS avg_duration_min FROM system.lakeflow.job_run_timeline WHERE period_start_time >= DATEADD(DAY, -30, CURRENT_DATE()) AND run_type = 'JOB_RUN' AND result_state IS NOT NULL",
-            "ai_usage": "SELECT COUNT(*) AS ai_queries FROM system.query.history WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE()) AND (statement_text LIKE '%%ai_query%%' OR statement_text LIKE '%%ai_classify%%' OR statement_text LIKE '%%ai_extract%%' OR statement_text LIKE '%%ai_forecast%%')",
-        }
-        wrapped_stats = {}
-        for wkey, wsql in wrapped_queries.items():
-            try:
-                wrows = executor.execute(wsql, timeout=180)
-                wrapped_stats[wkey] = wrows[0] if wrows else {}
-            except Exception as we:
-                logger.warning(f"Wrapped query '{wkey}' failed: {we}")
-                wrapped_stats[wkey] = {}
 
         dow_names = {1:'Sunday',2:'Monday',3:'Tuesday',4:'Wednesday',5:'Thursday',6:'Friday',7:'Saturday'}
         wqv = wrapped_stats.get("query_volume", {})
@@ -1296,22 +1326,7 @@ def static_files(path):
 
 
 
-# ── LIVE COST MONITOR ────────────────────────────────────────────────
-
-@app.route("/live-monitor")
-def live_monitor_page():
-    """Redirect to Mission Control."""
-    from flask import redirect
-    return redirect("/mission-control", code=302)
-
-@app.route("/mission-control")
-def mission_control_page():
-    """Serve the Mission Control page."""
-    import os
-    mc_path = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist", "mission-control.html")
-    if os.path.exists(mc_path):
-        return send_from_directory(os.path.join(os.path.dirname(__file__), "..", "frontend", "dist"), "mission-control.html")
-    return "Mission Control page not found", 404
+# Mission Control routes removed (P0 perf fix)
 
 @app.route("/api/smart-feed")
 def smart_feed():
@@ -1376,243 +1391,12 @@ def smart_feed():
 
 @app.route("/api/cost-stream", methods=["GET"])
 def cost_stream():
-    """Return billing data for the live cost monitor."""
-    import requests as _req
-
-    user_token = request.headers.get("x-forwarded-access-token")
-    with state_lock:
-        wh_id = health_check_state.get("warehouse_id")
-    
-    # Also accept from query params
-    wh_id = wh_id or request.args.get("warehouse_id")
-    ws_host = get_host()
-
-    if not user_token:
-        return jsonify({"error": "No auth token. Please run a health check first."}), 401
-    if not wh_id:
-        # Auto-detect a warehouse
-        try:
-            from databricks.sdk import WorkspaceClient as _WC
-            _w = _WC()
-            _warehouses = list(_w.warehouses.list())
-            for _wh in _warehouses:
-                _st = str(getattr(_wh, 'state', '')).split('.')[-1]
-                if _st == 'RUNNING' and getattr(_wh, 'enable_serverless_compute', False):
-                    wh_id = _wh.id
-                    break
-            if not wh_id:
-                for _wh in _warehouses:
-                    _st = str(getattr(_wh, 'state', '')).split('.')[-1]
-                    if _st == 'RUNNING':
-                        wh_id = _wh.id
-                        break
-            if not wh_id and _warehouses:
-                wh_id = _warehouses[0].id
-        except Exception as _e:
-            logger.warning(f"Auto-detect warehouse failed: {_e}")
-    if not wh_id:
-        return jsonify({"error": "No warehouse available. Please run a health check first."}), 400
-
-    time_range = request.args.get("range", "1d")  # 1h, 1d, 7d, 30d
-
-    range_map = {
-        "1h": "INTERVAL 2 HOUR",
-        "1d": "INTERVAL 1 DAY",
-        "7d": "INTERVAL 7 DAY",
-        "30d": "INTERVAL 30 DAY",
-    }
-    interval = range_map.get(time_range, "INTERVAL 1 DAY")
-    
-    # Granularity: 1h/1d = per minute grouping, 7d = per hour, 30d = per day
-    if time_range in ("1h", "1d"):
-        trunc = "HOUR"
-        trunc_fine = "HOUR"
-    elif time_range == "7d":
-        trunc = "HOUR"
-        trunc_fine = "HOUR"
-    else:
-        trunc = "DAY"
-        trunc_fine = "DAY"
-
-    sql = f"""
-    WITH today_data AS (
-        SELECT
-            date_trunc('{trunc}', u.usage_start_time) AS ts,
-            u.sku_name,
-            SUM(u.usage_quantity * COALESCE(lp.pricing.effective_list.default, lp.pricing.default, 0)) AS cost
-        FROM system.billing.usage u
-        LEFT JOIN system.billing.list_prices lp
-          ON u.sku_name = lp.sku_name
-          AND u.cloud = lp.cloud
-          AND u.usage_unit = lp.usage_unit
-          AND u.usage_start_time >= lp.price_start_time
-          AND (lp.price_end_time IS NULL OR u.usage_start_time < lp.price_end_time)
-        WHERE u.usage_start_time >= current_timestamp() - {interval}
-          AND u.usage_start_time <= current_timestamp()
-        GROUP BY 1, 2
-    ),
-    yesterday_data AS (
-        SELECT
-            date_trunc('{trunc}', u.usage_start_time + {interval}) AS ts,
-            SUM(u.usage_quantity * COALESCE(lp.pricing.effective_list.default, lp.pricing.default, 0)) AS cost
-        FROM system.billing.usage u
-        LEFT JOIN system.billing.list_prices lp
-          ON u.sku_name = lp.sku_name
-          AND u.cloud = lp.cloud
-          AND u.usage_unit = lp.usage_unit
-          AND u.usage_start_time >= lp.price_start_time
-          AND (lp.price_end_time IS NULL OR u.usage_start_time < lp.price_end_time)
-        WHERE u.usage_start_time >= current_timestamp() - ({interval} + {interval})
-          AND u.usage_start_time < current_timestamp() - {interval}
-        GROUP BY 1
-    ),
-    time_series AS (
-        SELECT ts, SUM(cost) AS cost FROM today_data GROUP BY ts ORDER BY ts
-    ),
-    sku_totals AS (
-        SELECT
-            CASE
-                WHEN sku_name LIKE '%ALL_PURPOSE%' THEN 'All-Purpose Compute'
-                WHEN sku_name LIKE '%JOBS%' THEN 'Jobs Compute'
-                WHEN sku_name LIKE '%SQL%' THEN 'SQL Warehouse'
-                WHEN sku_name LIKE '%SERVERLESS%' THEN 'Serverless'
-                WHEN sku_name LIKE '%DLT%' THEN 'Delta Live Tables'
-                WHEN sku_name LIKE '%MODEL%' OR sku_name LIKE '%SERVING%' THEN 'Model Serving'
-                ELSE 'Other'
-            END AS category,
-            SUM(cost) AS total_cost
-        FROM today_data
-        GROUP BY 1
-        ORDER BY total_cost DESC
-        LIMIT 8
-    )
-    SELECT 'timeseries' AS qtype, CAST(ts AS STRING) AS k, CAST(cost AS STRING) AS v, NULL AS v2
-    FROM time_series
-    UNION ALL
-    SELECT 'yesterday' AS qtype, CAST(ts AS STRING) AS k, CAST(cost AS STRING) AS v, NULL AS v2
-    FROM yesterday_data
-    UNION ALL
-    SELECT 'sku' AS qtype, category AS k, CAST(total_cost AS STRING) AS v, NULL AS v2
-    FROM sku_totals
-    UNION ALL
-    SELECT 'sku_ts' AS qtype, CAST(ts AS STRING) AS k, CAST(cost AS STRING) AS v, category AS v2
-    FROM (
-        SELECT ts,
-            CASE
-                WHEN sku_name LIKE '%ALL_PURPOSE%' THEN 'All-Purpose Compute'
-                WHEN sku_name LIKE '%JOBS%' THEN 'Jobs Compute'
-                WHEN sku_name LIKE '%SQL%' THEN 'SQL Warehouse'
-                WHEN sku_name LIKE '%SERVERLESS%' THEN 'Serverless'
-                WHEN sku_name LIKE '%DLT%' THEN 'Delta Live Tables'
-                WHEN sku_name LIKE '%MODEL%' OR sku_name LIKE '%SERVING%' THEN 'Model Serving'
-                ELSE 'Other'
-            END AS category,
-            SUM(cost) AS cost
-        FROM today_data
-        GROUP BY 1, 2
-    )
-    ORDER BY qtype, k
-    """
-
-    try:
-        api_resp = _req.post(
-            f"{ws_host}/api/2.0/sql/statements",
-            headers={"Authorization": f"Bearer {user_token}"},
-            json={
-                "warehouse_id": wh_id,
-                "statement": sql,
-                "wait_timeout": "50s",
-                "disposition": "INLINE",
-                "format": "JSON_ARRAY",
-            },
-            timeout=60,
-        )
-
-        if api_resp.status_code != 200:
-            return jsonify({"error": f"SQL API error: {api_resp.status_code}"}), 500
-
-        resp_data = api_resp.json()
-        state_val = resp_data.get("status", {}).get("state", "")
-
-        if state_val == "FAILED":
-            err = resp_data.get("status", {}).get("error", {}).get("message", "Unknown")
-            return jsonify({"error": err}), 500
-
-        # Poll if needed
-        if state_val in ("PENDING", "RUNNING"):
-            stmt_id = resp_data.get("statement_id")
-            for _ in range(25):
-                time.sleep(2)
-                poll = _req.get(
-                    f"{ws_host}/api/2.0/sql/statements/{stmt_id}",
-                    headers={"Authorization": f"Bearer {user_token}"},
-                    timeout=15,
-                )
-                resp_data = poll.json()
-                state_val = resp_data.get("status", {}).get("state", "")
-                if state_val in ("SUCCEEDED", "FAILED"):
-                    break
-            if state_val == "FAILED":
-                err = resp_data.get("status", {}).get("error", {}).get("message", "")
-                return jsonify({"error": err}), 500
-
-        if state_val != "SUCCEEDED":
-            return jsonify({"error": f"Query state: {state_val}"}), 500
-
-        rows = resp_data.get("result", {}).get("data_array", [])
-
-        # Parse results
-        timeseries = []
-        yesterday = []
-        skus = []
-        sku_ts = {}
-        for row in rows:
-            qtype, k, v, v2 = row[0], row[1], row[2], row[3] if len(row) > 3 else None
-            if qtype == "timeseries" and k and v:
-                timeseries.append({"ts": k, "cost": float(v)})
-            elif qtype == "yesterday" and k and v:
-                yesterday.append({"ts": k, "cost": float(v)})
-            elif qtype == "sku" and k and v:
-                skus.append({"category": k, "cost": float(v)})
-            elif qtype == "sku_ts" and k and v and v2:
-                if v2 not in sku_ts:
-                    sku_ts[v2] = []
-                sku_ts[v2].append({"ts": k, "cost": float(v)})
-
-        # Calculate metrics
-        total_cost = sum(p["cost"] for p in timeseries)
-        yesterday_total = sum(p["cost"] for p in yesterday)
-
-        # Burn rate (last data point cost / hours)
-        burn_rate = 0
-        if len(timeseries) >= 2:
-            last = timeseries[-1]["cost"]
-            burn_rate = last / 60  # per minute (since grouped by hour, divide by 60)
-        elif len(timeseries) == 1:
-            burn_rate = timeseries[0]["cost"] / 60
-
-        # Projected daily total
-        import datetime
-        now = datetime.datetime.utcnow()
-        hours_elapsed = now.hour + now.minute / 60
-        projected = (total_cost / max(hours_elapsed, 0.5)) * 24 if hours_elapsed > 0 else 0
-
-        return jsonify({
-            "timeseries": timeseries,
-            "yesterday": yesterday,
-            "skus": skus,
-            "sku_ts": sku_ts,
-            "total_cost": round(total_cost, 2),
-            "yesterday_total": round(yesterday_total, 2),
-            "burn_rate_per_min": round(burn_rate, 2),
-            "projected_daily": round(projected, 2),
-            "range": time_range,
-            "data_points": len(timeseries),
-        })
-
-    except Exception as e:
-        logger.error(f"Cost stream error: {e}")
-        return jsonify({"error": str(e)[:200]}), 500
+    """Cost stream disabled — Mission Control removed (P0 perf fix)."""
+    return jsonify({
+        "timeseries": [], "yesterday": [], "skus": [], "sku_ts": {},
+        "total_cost": 0, "yesterday_total": 0, "burn_rate_per_min": 0,
+        "projected_daily": 0, "range": "1d", "data_points": 0,
+    })
 
 
 if __name__ == "__main__":

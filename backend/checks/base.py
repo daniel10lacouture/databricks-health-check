@@ -156,7 +156,7 @@ class QueryExecutor:
                 json={
                     "warehouse_id": self.warehouse_id,
                     "statement": query.strip(),
-                    "wait_timeout": "10s",
+                    "wait_timeout": "30s",
                     "disposition": "INLINE",
                     "format": "JSON_ARRAY",
                 },
@@ -241,7 +241,7 @@ class QueryExecutor:
 
         deadline = _time.time() + timeout
         while _time.time() < deadline:
-            _time.sleep(2)
+            _time.sleep(1)
             resp = requests.get(
                 f"{self.host}/api/2.0/sql/statements/{statement_id}",
                 headers={"Authorization": f"Bearer {self.token}"},
@@ -287,6 +287,199 @@ class APIClient:
         return self.w.warehouses.get(warehouse_id)
 
 
+
+
+class DataPrefetcher:
+    """Runs parallel prefetch queries for heavy system tables at startup.
+    
+    Instead of 192 individual queries, prefetch 6 broad datasets in parallel,
+    then let check runners compute metrics from the prefetched data.
+    """
+    
+    PREFETCH_QUERIES = {
+        # query_history: pre-aggregated metrics (too large for raw rows)
+        "qh_metrics": """
+            SELECT
+                COUNT(*) AS total_queries,
+                COUNT(DISTINCT executed_by) AS unique_users,
+                SUM(CASE WHEN execution_status = 'FAILED' THEN 1 ELSE 0 END) AS failed_queries,
+                SUM(CASE WHEN execution_status = 'FAILED' THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) AS error_rate_pct,
+                COUNT(DISTINCT CASE WHEN client_application = 'Databricks SQL Dashboard' THEN executed_by END) AS dashboard_users,
+                SUM(CASE WHEN client_application = 'Databricks SQL Dashboard' THEN 1 ELSE 0 END) AS dashboard_queries,
+                COUNT(DISTINCT CASE WHEN client_application = 'Databricks SQL Genie Space' THEN executed_by END) AS genie_users,
+                SUM(CASE WHEN client_application = 'Databricks SQL Genie Space' THEN 1 ELSE 0 END) AS genie_queries,
+                SUM(CASE WHEN LOWER(statement_text) LIKE '%%ai_query(%%' OR LOWER(statement_text) LIKE '%%ai_generate%%' THEN 1 ELSE 0 END) AS ai_func_queries,
+                PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY total_duration_ms) AS p50_duration_ms,
+                PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY total_duration_ms) AS p95_duration_ms,
+                PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY waiting_at_capacity_duration_ms) AS p95_queue_ms
+            FROM system.query.history
+            WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE())
+        """,
+        
+        # query_history by client_application
+        "qh_by_client": """
+            SELECT client_application,
+                   COUNT(*) AS query_count,
+                   COUNT(DISTINCT executed_by) AS user_count
+            FROM system.query.history
+            WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE())
+            GROUP BY 1
+        """,
+        
+        # query_history: error patterns
+        "qh_errors": """
+            SELECT SUBSTRING(error_message, 1, 120) AS error_pattern,
+                   COUNT(*) AS occurrences,
+                   COUNT(DISTINCT executed_by) AS affected_users
+            FROM system.query.history
+            WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE())
+              AND execution_status = 'FAILED'
+            GROUP BY 1 ORDER BY 2 DESC LIMIT 20
+        """,
+        
+        # query_history: per-warehouse stats
+        "qh_by_warehouse": """
+            SELECT compute.warehouse_id AS warehouse_id,
+                   COUNT(*) AS total_queries,
+                   SUM(CASE WHEN spilled_local_bytes > 0 THEN 1 ELSE 0 END) AS spill_queries,
+                   SUM(CASE WHEN execution_status = 'FAILED' THEN 1 ELSE 0 END) AS failed_queries
+            FROM system.query.history
+            WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE())
+              AND compute.warehouse_id IS NOT NULL
+            GROUP BY 1
+        """,
+        
+        # query_history: top expensive queries
+        "qh_expensive": """
+            SELECT LEFT(statement_text, 200) AS query_preview,
+                   COUNT(*) AS exec_count,
+                   ROUND(AVG(total_duration_ms) / 1000, 1) AS avg_sec,
+                   ROUND(SUM(total_task_duration_ms) / 1000.0 / 3600.0, 2) AS total_task_hours
+            FROM system.query.history
+            WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE())
+              AND total_duration_ms > 5000
+            GROUP BY 1 ORDER BY total_task_hours DESC LIMIT 20
+        """,
+        
+        # billing.usage: comprehensive cost breakdown
+        "billing_summary": """
+            SELECT
+                sku_name,
+                billing_origin_product AS product,
+                usage_metadata.warehouse_id AS warehouse_id,
+                usage_metadata.cluster_id AS cluster_id,
+                usage_metadata.job_id AS job_id,
+                CASE WHEN sku_name LIKE '%%SERVERLESS%%' THEN 'serverless' ELSE 'classic' END AS compute_mode,
+                CASE WHEN sku_name LIKE '%%PHOTON%%' THEN 'photon' ELSE 'standard' END AS engine,
+                CASE WHEN sku_name LIKE '%%ALL_PURPOSE%%' OR sku_name LIKE '%%ALL PURPOSE%%' THEN 'all_purpose'
+                     WHEN sku_name LIKE '%%JOBS%%' THEN 'jobs'
+                     WHEN sku_name LIKE '%%SQL%%' THEN 'sql'
+                     WHEN sku_name LIKE '%%SERVING%%' THEN 'serving'
+                     WHEN sku_name LIKE '%%DLT%%' OR sku_name LIKE '%%PIPELINES%%' THEN 'pipelines'
+                     ELSE 'other' END AS workload_type,
+                SUM(usage_quantity) AS dbus,
+                COUNT(*) AS records
+            FROM system.billing.usage
+            WHERE usage_date >= DATEADD(DAY, -30, CURRENT_DATE())
+            GROUP BY 1,2,3,4,5,6,7,8
+        """,
+        
+        # billing with prices (for cost calculations)
+        "billing_costs": """
+            SELECT
+                u.sku_name,
+                u.billing_origin_product AS product,
+                u.usage_metadata.warehouse_id AS warehouse_id,
+                u.usage_metadata.job_id AS job_id,
+                ROUND(SUM(u.usage_quantity), 2) AS dbus,
+                ROUND(SUM(u.usage_quantity * COALESCE(lp.pricing.default, 0)), 2) AS cost
+            FROM system.billing.usage u
+            LEFT JOIN system.billing.list_prices lp
+                ON u.cloud = lp.cloud AND u.sku_name = lp.sku_name
+                AND u.usage_date >= lp.price_start_time
+                AND (lp.price_end_time IS NULL OR u.usage_date < lp.price_end_time)
+            WHERE u.usage_date >= DATEADD(DAY, -30, CURRENT_DATE())
+            GROUP BY 1,2,3,4
+        """,
+        
+        # compute.clusters: full snapshot
+        "clusters": """
+            SELECT cluster_id, cluster_name, cluster_source, auto_termination_minutes,
+                   dbr_version, data_security_mode, policy_id,
+                   min_autoscale_workers, max_autoscale_workers, worker_count, tags
+            FROM system.compute.clusters
+            WHERE delete_time IS NULL
+        """,
+        
+        # information_schema.tables: full snapshot
+        "tables": """
+            SELECT table_catalog, table_schema, table_name, table_type, table_owner,
+                   data_source_format, comment, created, last_altered
+            FROM system.information_schema.tables
+            WHERE table_schema NOT IN ('information_schema', 'default')
+        """,
+        
+        # job runs aggregated
+        "job_runs": """
+            SELECT r.job_id, j.name AS job_name,
+                   COUNT(*) AS total_runs,
+                   SUM(CASE WHEN r.result_state = 'FAILED' THEN 1 ELSE 0 END) AS failed_runs,
+                   SUM(CASE WHEN r.result_state = 'SUCCESS' THEN 1 ELSE 0 END) AS success_runs,
+                   SUM(CASE WHEN r.trigger_type = 'MANUAL' THEN 1 ELSE 0 END) AS manual_runs,
+                   AVG(r.run_duration_seconds) AS avg_duration_sec
+            FROM system.lakeflow.job_run_timeline r
+            LEFT JOIN system.lakeflow.jobs j ON r.job_id = j.job_id
+            WHERE r.period_start_time >= DATEADD(DAY, -30, CURRENT_DATE())
+            GROUP BY 1, 2
+        """,
+        
+        # warehouses snapshot
+        "warehouses": """
+            SELECT warehouse_id, warehouse_name, warehouse_type, warehouse_size,
+                   min_clusters, max_clusters, auto_stop_minutes, delete_time
+            FROM system.compute.warehouses
+            WHERE delete_time IS NULL
+        """,
+    }
+    
+    def __init__(self, executor):
+        self.executor = executor
+        self.data = {}
+        self._lock = threading.Lock()
+    
+    def prefetch_all(self):
+        """Run all prefetch queries in parallel. Returns dict of results."""
+        import time as _time
+        logger.info(f"Starting prefetch of {len(self.PREFETCH_QUERIES)} datasets...")
+        start = _time.time()
+        
+        def _fetch_one(key, query):
+            t0 = _time.time()
+            try:
+                rows = self.executor.execute(query, use_cache=False, timeout=180)
+                elapsed = _time.time() - t0
+                logger.info(f"Prefetch '{key}': {len(rows)} rows in {elapsed:.1f}s")
+                return key, rows
+            except Exception as e:
+                elapsed = _time.time() - t0
+                logger.warning(f"Prefetch '{key}' failed in {elapsed:.1f}s: {e}")
+                return key, []
+        
+        results = {}
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futures = {pool.submit(_fetch_one, k, q): k for k, q in self.PREFETCH_QUERIES.items()}
+            for future in as_completed(futures):
+                key, rows = future.result()
+                results[key] = rows
+        
+        total_elapsed = _time.time() - start
+        total_rows = sum(len(v) for v in results.values())
+        logger.info(f"Prefetch complete: {len(results)} datasets, {total_rows} total rows in {total_elapsed:.1f}s")
+        
+        self.data = results
+        return results
+
+
 class BaseCheckRunner:
     """Base class for section check runners."""
 
@@ -295,10 +488,155 @@ class BaseCheckRunner:
     section_type: str = "core"  # core / conditional / advisory
     icon: str = ""
 
-    def __init__(self, executor: QueryExecutor, api_client: APIClient, include_table_analysis: bool = False):
+    def __init__(self, executor: QueryExecutor, api_client: APIClient, include_table_analysis: bool = False, prefetch_data: dict = None):
         self.executor = executor
         self.api = api_client
         self.include_table_analysis = include_table_analysis
+        self._prefetch = prefetch_data or {}
+
+    def pf(self, key: str) -> list:
+        """Get prefetched data by key. Returns empty list if not available."""
+        return self._prefetch.get(key, [])
+
+    def pf_sum(self, key: str, field: str, filter_fn=None) -> float:
+        """Sum a field from prefetched data, optionally filtering rows."""
+        rows = self.pf(key)
+        if filter_fn:
+            rows = [r for r in rows if filter_fn(r)]
+        return sum(float(r.get(field, 0) or 0) for r in rows)
+
+    def pf_count(self, key: str, filter_fn=None) -> int:
+        """Count rows from prefetched data, optionally filtering."""
+        rows = self.pf(key)
+        if filter_fn:
+            return sum(1 for r in rows if filter_fn(r))
+        return len(rows)
+
+    def pf_distinct(self, key: str, field: str, filter_fn=None) -> set:
+        """Get distinct values of a field from prefetched data."""
+        rows = self.pf(key)
+        if filter_fn:
+            rows = [r for r in rows if filter_fn(r)]
+        return set(r.get(field) for r in rows if r.get(field) is not None)
+
+    def query_or_pf(self, sql: str, pf_key: str = None, pf_compute=None):
+        """Try to compute result from prefetch data; fall back to SQL if unavailable.
+        
+        Usage:
+            rows = self.query_or_pf(
+                sql="SELECT COUNT(*) AS cnt FROM system.information_schema.tables ...",
+                pf_key="tables",
+                pf_compute=lambda data: [{"cnt": len(data)}]
+            )
+        """
+        if pf_key and pf_compute:
+            data = self.pf(pf_key)
+            if data:
+                try:
+                    return pf_compute(data)
+                except Exception:
+                    pass  # Fall through to SQL
+        return self.executor.execute(sql)
+
+    def get_tables(self, filter_fn=None) -> list:
+        """Get tables from prefetch or fall back to SQL."""
+        data = self.pf('tables')
+        if data:
+            return [r for r in data if filter_fn(r)] if filter_fn else data
+        rows = self.executor.execute("""
+            SELECT table_catalog, table_schema, table_name, table_type, table_owner,
+                   data_source_format, comment, created, last_altered
+            FROM system.information_schema.tables
+            WHERE table_schema NOT IN ('information_schema', 'default')""")
+        return [r for r in rows if filter_fn(r)] if filter_fn else rows
+
+    def get_clusters(self, filter_fn=None) -> list:
+        """Get clusters from prefetch or fall back to SQL."""
+        data = self.pf('clusters')
+        if data:
+            return [r for r in data if filter_fn(r)] if filter_fn else data
+        rows = self.executor.execute("""
+            SELECT cluster_id, cluster_name, cluster_source, auto_termination_minutes,
+                   dbr_version, data_security_mode, policy_id,
+                   min_autoscale_workers, max_autoscale_workers, worker_count, tags
+            FROM system.compute.clusters WHERE delete_time IS NULL""")
+        return [r for r in rows if filter_fn(r)] if filter_fn else rows
+
+    def get_job_runs(self, filter_fn=None) -> list:
+        """Get job run aggregates from prefetch or fall back to SQL."""
+        data = self.pf('job_runs')
+        if data:
+            return [r for r in data if filter_fn(r)] if filter_fn else data
+        rows = self.executor.execute("""
+            SELECT r.job_id, j.name AS job_name,
+                   COUNT(*) AS total_runs,
+                   SUM(CASE WHEN r.result_state = 'FAILED' THEN 1 ELSE 0 END) AS failed_runs,
+                   SUM(CASE WHEN r.result_state = 'SUCCESS' THEN 1 ELSE 0 END) AS success_runs,
+                   SUM(CASE WHEN r.trigger_type = 'MANUAL' THEN 1 ELSE 0 END) AS manual_runs,
+                   AVG(r.run_duration_seconds) AS avg_duration_sec
+            FROM system.lakeflow.job_run_timeline r
+            LEFT JOIN system.lakeflow.jobs j ON r.job_id = j.job_id
+            WHERE r.period_start_time >= DATEADD(DAY, -30, CURRENT_DATE())
+            GROUP BY 1, 2""")
+        return [r for r in rows if filter_fn(r)] if filter_fn else rows
+
+    def get_billing(self, filter_fn=None) -> list:
+        """Get billing summary from prefetch or fall back to SQL."""
+        data = self.pf('billing_summary')
+        if data:
+            return [r for r in data if filter_fn(r)] if filter_fn else data
+        rows = self.executor.execute("""
+            SELECT sku_name, billing_origin_product AS product,
+                   usage_metadata.warehouse_id AS warehouse_id,
+                   usage_metadata.cluster_id AS cluster_id,
+                   usage_metadata.job_id AS job_id,
+                   CASE WHEN sku_name LIKE '%%SERVERLESS%%' THEN 'serverless' ELSE 'classic' END AS compute_mode,
+                   CASE WHEN sku_name LIKE '%%PHOTON%%' THEN 'photon' ELSE 'standard' END AS engine,
+                   SUM(usage_quantity) AS dbus, COUNT(*) AS records
+            FROM system.billing.usage
+            WHERE usage_date >= DATEADD(DAY, -30, CURRENT_DATE())
+            GROUP BY 1,2,3,4,5,6,7""")
+        return [r for r in rows if filter_fn(r)] if filter_fn else rows
+
+    def get_billing_costs(self, filter_fn=None) -> list:
+        """Get billing with costs from prefetch or fall back to SQL."""
+        data = self.pf('billing_costs')
+        if data:
+            return [r for r in data if filter_fn(r)] if filter_fn else data
+        rows = self.executor.execute("""
+            SELECT u.sku_name, u.billing_origin_product AS product,
+                   u.usage_metadata.warehouse_id AS warehouse_id,
+                   u.usage_metadata.job_id AS job_id,
+                   ROUND(SUM(u.usage_quantity), 2) AS dbus,
+                   ROUND(SUM(u.usage_quantity * COALESCE(lp.pricing.default, 0)), 2) AS cost
+            FROM system.billing.usage u
+            LEFT JOIN system.billing.list_prices lp
+                ON u.cloud = lp.cloud AND u.sku_name = lp.sku_name
+                AND u.usage_date >= lp.price_start_time
+                AND (lp.price_end_time IS NULL OR u.usage_date < lp.price_end_time)
+            WHERE u.usage_date >= DATEADD(DAY, -30, CURRENT_DATE())
+            GROUP BY 1,2,3,4""")
+        return [r for r in rows if filter_fn(r)] if filter_fn else rows
+
+    def get_qh_metrics(self) -> dict:
+        """Get query history aggregate metrics from prefetch."""
+        data = self.pf('qh_metrics')
+        if data and len(data) > 0:
+            return data[0]
+        return {}
+
+    def get_warehouses(self, filter_fn=None) -> list:
+        """Get warehouses from prefetch or fall back to SQL."""
+        data = self.pf('warehouses')
+        if data:
+            return [r for r in data if filter_fn(r)] if filter_fn else data
+        rows = self.executor.execute("""
+            SELECT warehouse_id, warehouse_name, warehouse_type, warehouse_size,
+                   min_clusters, max_clusters, auto_stop_minutes
+            FROM system.compute.warehouses WHERE delete_time IS NULL""")
+        return [r for r in rows if filter_fn(r)] if filter_fn else rows
+
+
 
     def is_active(self) -> bool:
         """Check if this section has meaningful usage (>$100/mo or >10 resources)."""

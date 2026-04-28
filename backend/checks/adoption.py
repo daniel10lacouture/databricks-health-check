@@ -53,28 +53,38 @@ class AdoptionCheckRunner(BaseCheckRunner):
         if hasattr(self, "_profile"):
             return self._profile
         profile = {"users": 0, "workspaces": 0, "jobs": 0}
-        try:
-            rows = self.executor.execute("""
-                SELECT COUNT(DISTINCT executed_by) AS users
-                FROM system.query.history
-                WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE())""")
-            profile["users"] = rows[0]["users"] if rows else 0
-        except Exception:
-            pass
+        # Use prefetched query history metrics
+        qh = self.get_qh_metrics()
+        if qh:
+            profile["users"] = int(qh.get("unique_users", 0) or 0)
+        else:
+            try:
+                rows = self.executor.execute("""
+                    SELECT COUNT(DISTINCT executed_by) AS users
+                    FROM system.query.history
+                    WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE())""")
+                profile["users"] = rows[0]["users"] if rows else 0
+            except Exception:
+                pass
         try:
             rows = self.executor.execute("""
                 SELECT COUNT(*) AS cnt FROM system.access.workspaces_latest""")
             profile["workspaces"] = rows[0]["cnt"] if rows else 0
         except Exception:
             pass
-        try:
-            rows = self.executor.execute("""
-                SELECT COUNT(DISTINCT job_id) AS cnt
-                FROM system.lakeflow.job_run_timeline
-                WHERE period_start_time >= DATEADD(DAY, -30, CURRENT_DATE())""")
-            profile["jobs"] = rows[0]["cnt"] if rows else 0
-        except Exception:
-            pass
+        # Use prefetched job runs
+        job_runs = self.get_job_runs()
+        if job_runs:
+            profile["jobs"] = len(set(r.get("job_id") for r in job_runs if r.get("job_id")))
+        else:
+            try:
+                rows = self.executor.execute("""
+                    SELECT COUNT(DISTINCT job_id) AS cnt
+                    FROM system.lakeflow.job_run_timeline
+                    WHERE period_start_time >= DATEADD(DAY, -30, CURRENT_DATE())""")
+                profile["jobs"] = rows[0]["cnt"] if rows else 0
+            except Exception:
+                pass
         self._profile = profile
         return profile
 
@@ -89,39 +99,42 @@ class AdoptionCheckRunner(BaseCheckRunner):
 
     def check_13_1_1_aibi_dashboard_adoption(self) -> CheckResult:
         """Check if AI/BI Dashboards are being used vs external BI tools."""
-        try:
-            rows = self.executor.execute("""
-                SELECT
-                    COUNT(*) AS total_queries,
-                    COUNT(CASE WHEN client_application = 'Databricks SQL Dashboard'
-                               OR client_application = 'Databricks SQL Genie Space'
-                               OR client_application LIKE '%lakeview%' THEN 1 END) AS native_dash,
-                    COUNT(CASE WHEN client_application LIKE '%tableau%'
-                               OR client_application LIKE '%power%bi%'
-                               OR client_application LIKE '%looker%'
-                               OR client_application LIKE '%Databricks Connector%' THEN 1 END) AS external_bi
-                FROM system.query.history
-                WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE())
-                  AND statement_type = 'SELECT'""")
-        except Exception:
-            return CheckResult("13.1.1", "AI/BI Dashboard Adoption",
-                "AI & BI Activation", 0, "info",
-                "Could not query dashboard usage", "Active AI/BI Dashboard usage")
-
-        r = rows[0] if rows else {}
-        native = r.get("native_dash", 0) or 0
-        external = r.get("external_bi", 0) or 0
-        total = r.get("total_queries", 1) or 1
-
+        qh = self.get_qh_metrics()
+        qh_by_client = self.pf("qh_by_client")
+        if qh and qh_by_client:
+            native = int(qh.get("dashboard_queries", 0) or 0) + int(qh.get("genie_queries", 0) or 0)
+            external = sum(int(r.get("query_count", 0) or 0) for r in qh_by_client
+                          if any(k in (r.get("client_application","") or "").lower() for k in ["tableau","power bi","looker","databricks connector"]))
+            total = int(qh.get("total_queries", 1) or 1)
+        else:
+            try:
+                rows = self.executor.execute("""
+                    SELECT COUNT(*) AS total_queries,
+                        COUNT(CASE WHEN client_application = 'Databricks SQL Dashboard'
+                                   OR client_application = 'Databricks SQL Genie Space'
+                                   OR client_application LIKE '%lakeview%' THEN 1 END) AS native_dash,
+                        COUNT(CASE WHEN client_application LIKE '%tableau%'
+                                   OR client_application LIKE '%power%bi%'
+                                   OR client_application LIKE '%looker%'
+                                   OR client_application LIKE '%Databricks Connector%' THEN 1 END) AS external_bi
+                    FROM system.query.history
+                    WHERE start_time >= DATEADD(DAY, -30, CURRENT_DATE())
+                      AND statement_type = 'SELECT'""")
+            except Exception:
+                return CheckResult("13.1.1", "AI/BI Dashboard Adoption",
+                    "AI & BI Activation", 0, "info",
+                    "Could not query dashboard usage", "Active AI/BI Dashboard usage")
+            r = rows[0] if rows else {}
+            native = r.get("native_dash", 0) or 0
+            external = r.get("external_bi", 0) or 0
+            total = r.get("total_queries", 1) or 1
         if native > 0 and native >= external:
             score, status = 100, "pass"
         elif native > 0:
             score, status = 50, "partial"
         else:
             score, status = 0, "fail"
-
         benchmark = self._peer_benchmark("users", "higher AI/BI Dashboard adoption for self-serve analytics")
-
         rec = None
         if native == 0:
             rec = Recommendation(
@@ -135,7 +148,6 @@ class AdoptionCheckRunner(BaseCheckRunner):
                 impact="Reduces data movement and licensing costs while improving data freshness.",
                 priority="medium",
                 docs_url="https://docs.databricks.com/en/dashboards/index.html")
-
         return CheckResult("13.1.1", "AI/BI Dashboard Adoption",
             "AI & BI Activation", score, status,
             f"{native} native dashboard queries vs {external} external BI queries (30d)",
@@ -241,42 +253,26 @@ class AdoptionCheckRunner(BaseCheckRunner):
 
     def check_13_2_1_serverless_warehouse_adoption(self) -> CheckResult:
         """Check serverless vs classic warehouse ratio."""
-        try:
-            rows = self.executor.execute("""
-                SELECT
-                    COUNT(*) AS total,
-                    COUNT(CASE WHEN warehouse_type = 'PRO' THEN 1 END) AS serverless,
-                    COUNT(CASE WHEN warehouse_type != 'PRO' THEN 1 END) AS classic
-                FROM system.compute.warehouses
-                WHERE delete_time IS NULL""")
-        except Exception:
+        warehouses = self.get_warehouses()
+        if not warehouses:
             return CheckResult("13.2.1", "Serverless Warehouse Adoption",
                 "Compute Modernization", 0, "info",
                 "Could not query warehouses", "Serverless-first warehouse strategy")
-
-        r = rows[0] if rows else {}
-        total = r.get("total", 0) or 1
-        serverless = r.get("serverless", 0) or 0
-        classic = r.get("classic", 0) or 0
+        total = len(warehouses) or 1
+        serverless = len([w for w in warehouses if w.get("warehouse_type") == "PRO"])
+        classic = total - serverless
         pct = round(serverless / total * 100, 1)
-
-        if pct >= 50:
-            score, status = 100, "pass"
-        elif pct >= 10:
-            score, status = 50, "partial"
-        else:
-            score, status = 0, "fail"
-
+        if pct >= 50: score, status = 100, "pass"
+        elif pct >= 10: score, status = 50, "partial"
+        else: score, status = 0, "fail"
         benchmark = self._peer_benchmark("workspaces", "a higher serverless warehouse adoption rate")
-
         rec = None
         if pct < 50:
             rec = Recommendation(
-                action=f"Migrate classic warehouses to serverless. Currently {serverless}/{total} ({pct}%) are serverless. Start with dev/test warehouses, then production.",
-                impact="Serverless warehouses eliminate idle costs, start instantly, and scale automatically. Typical savings of 30-50% on warehouse spend.",
+                action=f"Migrate classic warehouses to serverless. Currently {serverless}/{total} ({pct}%) are serverless.",
+                impact="Serverless warehouses eliminate idle costs, start instantly, and scale automatically.",
                 priority="high",
                 docs_url="https://docs.databricks.com/en/compute/sql-warehouse/serverless.html")
-
         return CheckResult("13.2.1", "Serverless Warehouse Adoption",
             "Compute Modernization", score, status,
             f"{serverless}/{total} warehouses are serverless ({pct}%)",
@@ -288,41 +284,25 @@ class AdoptionCheckRunner(BaseCheckRunner):
 
     def check_13_2_2_photon_adoption(self) -> CheckResult:
         """Check Photon-accelerated vs non-Photon compute usage."""
-        try:
-            rows = self.executor.execute("""
-                SELECT
-                    SUM(usage_quantity) AS total_dbus,
-                    SUM(CASE WHEN sku_name LIKE '%PHOTON%' THEN usage_quantity ELSE 0 END) AS photon_dbus
-                FROM system.billing.usage
-                WHERE usage_date >= DATEADD(DAY, -30, CURRENT_DATE())
-                  AND usage_unit = 'DBU'""")
-        except Exception:
+        billing = self.get_billing()
+        if not billing:
             return CheckResult("13.2.2", "Photon Acceleration Adoption",
                 "Compute Modernization", 0, "info",
                 "Could not query billing usage", "Photon enabled across workloads")
-
-        r = rows[0] if rows else {}
-        total = r.get("total_dbus", 0) or 1
-        photon = r.get("photon_dbus", 0) or 0
+        total = sum(float(r.get("dbus", 0) or 0) for r in billing) or 1
+        photon = sum(float(r.get("dbus", 0) or 0) for r in billing if "PHOTON" in r.get("sku_name","").upper())
         pct = round(photon / total * 100, 1)
-
-        if pct >= 50:
-            score, status = 100, "pass"
-        elif pct >= 10:
-            score, status = 50, "partial"
-        else:
-            score, status = 0, "fail"
-
+        if pct >= 50: score, status = 100, "pass"
+        elif pct >= 10: score, status = 50, "partial"
+        else: score, status = 0, "fail"
         benchmark = self._peer_benchmark("jobs", "a higher share of Photon-accelerated workloads")
-
         rec = None
         if pct < 50:
             rec = Recommendation(
                 action=f"Enable Photon runtime across more workloads. Currently {pct}% of DBUs are Photon-accelerated.",
-                impact="Photon delivers 2-8x faster performance for SQL and Spark workloads with zero code changes. Faster queries complete sooner, reducing cost per query.",
+                impact="Photon delivers 2-8x faster performance for SQL and Spark workloads with zero code changes.",
                 priority="medium",
                 docs_url="https://docs.databricks.com/en/compute/photon.html")
-
         return CheckResult("13.2.2", "Photon Acceleration Adoption",
             "Compute Modernization", score, status,
             f"{pct}% of DBUs running on Photon (30d)",
