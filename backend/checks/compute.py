@@ -118,7 +118,8 @@ class ComputeCheckRunner(BaseCheckRunner):
                                  and r.get("dbr_version") is not None)
         if not rows:
             return CheckResult("3.1.6", "Supported runtime versions",
-                "Cluster Configuration", 0, "not_evaluated", "Could not query", "All on supported versions")
+                "Cluster Configuration", 0, "not_evaluated", "No interactive clusters found (UI/API)", "All on supported versions",
+                details={"summary": "No active interactive clusters with UI or API source were found. This check only evaluates interactive clusters, not job clusters."})
         total = len(rows) or 1
         supported_prefixes = ["15.4", "16.", "17.", "18."]
         unsupported = [r for r in rows if not any(str(r.get("dbr_version","")).startswith(p) for p in supported_prefixes)]

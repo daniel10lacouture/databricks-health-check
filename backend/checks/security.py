@@ -20,7 +20,8 @@ class SecurityCheckRunner(BaseCheckRunner):
         except Exception:
             return CheckResult("5.1.1", "IP access lists configured",
                 "Network Security", 0, "not_evaluated",
-                "Requires workspace admin permissions to check IP access lists", "At least 1 IP access list")
+                "Requires workspace admin permissions (grant to app service principal)", "At least 1 IP access list",
+                details={"summary": "This check requires workspace admin permissions on the app service principal. Go to Admin Settings → Service Principals → grant Workspace Admin role to the health check app SP."})
         if lists:
             nc = [{"label": getattr(l, "label", ""), "list_type": str(getattr(l, "list_type", "")),
                    "ip_count": len(getattr(l, "ip_addresses", []) or []),
@@ -45,7 +46,8 @@ class SecurityCheckRunner(BaseCheckRunner):
         except Exception:
             return CheckResult("5.2.5", "PAT token max lifetime configured",
                 "Identity & Access Management", 0, "not_evaluated",
-                "Requires workspace admin permissions to check PAT tokens", "<=90 days")
+                "Requires workspace admin permissions (grant to app service principal)", "<=90 days",
+                details={"summary": "This check requires workspace admin permissions on the app service principal. Go to Admin Settings → Service Principals → grant Workspace Admin role to the health check app SP."})
         if not tokens:
             return CheckResult("5.2.5", "PAT token max lifetime configured",
                 "Identity & Access Management", 100, "pass",
