@@ -2,8 +2,6 @@
 
 A one-click diagnostic app that scores your Databricks account across **80+ checks in 13 categories** — covering cost optimization, security, governance, compute, AI/ML, and more. Get an overall health score (0–100), actionable recommendations, and achievement badges.
 
-<!-- Add a screenshot of your dashboard here -->
-<!-- ![Dashboard Screenshot](screenshot.png) -->
 
 ---
 
