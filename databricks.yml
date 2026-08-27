@@ -1,0 +1,25 @@
+# Databricks Asset Bundle for the Account Health Check app.
+# Deploying via `databricks bundle deploy` provisions the app WITH the user
+# authorization scopes already granted — no manual UI step required.
+#
+#   databricks bundle deploy -t dev
+#
+bundle:
+  name: account-health-check
+
+resources:
+  apps:
+    account_health_check:
+      name: account-health-check
+      description: "One-click Databricks account diagnostic across 80+ checks."
+      source_code_path: ./
+      user_api_scopes:
+        - sql
+        - catalog.tables:read
+        - catalog.catalogs:read
+        - catalog.schemas:read
+
+targets:
+  dev:
+    mode: development
+    default: true

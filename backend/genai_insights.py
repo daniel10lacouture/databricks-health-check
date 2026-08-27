@@ -12,10 +12,23 @@ from typing import Optional
 logger = logging.getLogger("health_check.genai")
 
 
+# Ordered fallback chain of Databricks Foundation Model endpoints. The app tries
+# each in turn so a workspace missing the primary model still gets AI insights.
+FALLBACK_MODELS = [
+    "databricks-meta-llama-3-3-70b-instruct",
+    "databricks-meta-llama-3-1-70b-instruct",
+    "databricks-llama-4-maverick",
+    "databricks-claude-3-7-sonnet",
+    "databricks-dbrx-instruct",
+]
+
+
 class GenAIInsights:
     def __init__(self, host: str, token: str, model: str = "databricks-meta-llama-3-3-70b-instruct"):
         self.host = host.rstrip("/")
         self.token = token
+        # Try the caller-specified model first, then the rest of the fallback chain.
+        self.models = [model] + [m for m in FALLBACK_MODELS if m != model]
         self.model = model
         self.endpoint = f"{self.host}/serving-endpoints/{self.model}/invocations"
 
@@ -45,10 +58,22 @@ class GenAIInsights:
         section_summary = []
         for sec in sections:
             if not sec.get("active"): continue
-            failing = [c["name"] for c in sec.get("checks", []) if c.get("status") in ("fail", "partial")]
+            # Include the actual measured value for each failing check, not just its
+            # name, so the model can reason about real numbers instead of guessing.
+            failing = []
+            for c in sec.get("checks", []):
+                if c.get("status") in ("fail", "partial"):
+                    cv = str(c.get("current_value", "")).strip()
+                    failing.append(f"{c['name']} [{cv}]" if cv and cv != "N/A" else c["name"])
             section_summary.append(f"- {sec['section_name']}: Score {sec.get('score', 'N/A')}, {len(failing)} issues" + (f" ({', '.join(failing[:3])})" if failing else ""))
 
-        rec_summary = [f"- [{r.get('priority','medium').upper()}] {r.get('check_name','')}: {r.get('action','')[:120]}" for r in top_recs[:8]]
+        # Give recommendations their measured current vs. target values too.
+        rec_summary = []
+        for r in top_recs[:8]:
+            cv = str(r.get("current_value", "")).strip()
+            tv = str(r.get("target_value", "")).strip()
+            metric = f" (now: {cv}, target: {tv})" if cv and cv != "N/A" else ""
+            rec_summary.append(f"- [{r.get('priority','medium').upper()}] {r.get('check_name','')}: {r.get('action','')[:120]}{metric}")
 
         anomaly_text = ""
         if anomalies:
@@ -90,9 +115,20 @@ Respond with valid JSON only (no markdown, no code fences):
     def _call_model(self, prompt: str) -> str:
         headers = {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
         payload = {"messages": [{"role": "user", "content": prompt}], "max_tokens": 2000, "temperature": 0.3}
-        resp = requests.post(self.endpoint, headers=headers, json=payload, timeout=60)
-        resp.raise_for_status()
-        return resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+        last_err = None
+        for model in self.models:
+            endpoint = f"{self.host}/serving-endpoints/{model}/invocations"
+            try:
+                resp = requests.post(endpoint, headers=headers, json=payload, timeout=60)
+                resp.raise_for_status()
+                # Remember which model actually answered so the UI can label it.
+                self.model = model
+                return resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+            except Exception as e:
+                last_err = e
+                logger.warning(f"GenAI model '{model}' unavailable, trying next: {str(e)[:120]}")
+                continue
+        raise RuntimeError(f"All Foundation Model endpoints failed. Last error: {last_err}")
 
     def _parse_response(self, raw: str) -> dict:
         text = raw.strip()
