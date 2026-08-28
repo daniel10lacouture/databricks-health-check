@@ -362,13 +362,13 @@ function renderGaugeSVG(score,size,showLabel){
   const fs=size<55?13:size<80?18:size<110?24:34;
   const c='#FF3621';
   const numColor='#1B3139';
-  const lbl=showLabel?'<text x="'+size/2+'" y="'+(size/2+fs*0.55)+'" text-anchor="middle" style="font-size:'+Math.max(9,fs*0.38)+'px;fill:'+c+';font-weight:500;font-family:Inter,sans-serif">'+scoreLabel(s)+'</text>':'';
+  const lbl=showLabel?'<text x="'+size/2+'" y="'+(size/2+fs*0.66)+'" text-anchor="middle" dominant-baseline="central" style="font-size:'+Math.max(9,fs*0.34)+'px;fill:'+c+';font-weight:500;font-family:Inter,sans-serif">'+scoreLabel(s)+'</text>':'';
   return '<svg width="'+size+'" height="'+size+'" viewBox="0 0 '+size+' '+size+'">'
     +'<g transform="rotate(135,'+size/2+','+size/2+')">'
     +'<circle cx="'+size/2+'" cy="'+size/2+'" r="'+r+'" fill="none" stroke="#E5E7EB" stroke-width="'+sw+'" stroke-dasharray="'+arcLen+' '+gapLen+'" stroke-linecap="round"/>'
     +'<circle cx="'+size/2+'" cy="'+size/2+'" r="'+r+'" fill="none" stroke="'+c+'" stroke-width="'+sw+'" stroke-dasharray="'+arcLen+' '+gapLen+'" stroke-dashoffset="'+offset+'" stroke-linecap="round" style="transition:stroke-dashoffset .8s ease"/>'
     +'</g>'
-    +'<text x="'+size/2+'" y="'+(size/2-(showLabel?fs*0.12:0))+'" text-anchor="middle" dominant-baseline="central" style="font-size:'+fs+'px;font-weight:700;fill:'+numColor+';font-family:Inter,sans-serif">'+s+'</text>'
+    +'<text x="'+size/2+'" y="'+(size/2-(showLabel?fs*0.30:0))+'" text-anchor="middle" dominant-baseline="central" style="font-size:'+fs+'px;font-weight:700;fill:'+numColor+';font-family:Inter,sans-serif">'+s+'</text>'
     +lbl
     +'</svg>';
 }
