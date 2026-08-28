@@ -306,13 +306,23 @@ class APIClient:
     """
 
     def __init__(self, host: str = "", token: str = ""):
+        import os
         from databricks.sdk import WorkspaceClient
+        h = (host if host.startswith("https://") else f"https://{host}") if host else ""
         if host and token:
-            h = host if host.startswith("https://") else f"https://{host}"
-            self.w = WorkspaceClient(host=h, token=token)
+            # OBO: force PAT so the app's ambient SP OAuth env vars don't trigger
+            # the SDK's "more than one authorization method configured" error.
+            self.w = WorkspaceClient(host=h, token=token, auth_type="pat")
             self.auth_mode = "obo"
         else:
-            self.w = WorkspaceClient()
+            # SP: the Databricks Apps runtime injects both OAuth (client id/secret)
+            # AND a token into the env, which conflicts. Pin OAuth M2M explicitly.
+            cid = os.environ.get("DATABRICKS_CLIENT_ID")
+            csec = os.environ.get("DATABRICKS_CLIENT_SECRET")
+            if h and cid and csec:
+                self.w = WorkspaceClient(host=h, client_id=cid, client_secret=csec, auth_type="oauth-m2m")
+            else:
+                self.w = WorkspaceClient()
             self.auth_mode = "sp"
 
     def list_warehouses(self):

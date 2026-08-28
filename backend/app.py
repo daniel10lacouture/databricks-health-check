@@ -79,12 +79,29 @@ def get_token():
     t = os.environ.get("DATABRICKS_TOKEN", "")
     if not t:
         try:
-            from databricks.sdk import WorkspaceClient
-            w = WorkspaceClient()
-            t = w.config.token
+            t = make_ws_client().config.token
         except Exception:
             pass
     return t or ""
+
+
+def make_ws_client(user_token: str = ""):
+    """Construct a WorkspaceClient with a single, explicit auth method.
+
+    The Databricks Apps runtime injects BOTH a token and the SP's OAuth
+    client id/secret into the environment. A bare WorkspaceClient() then fails
+    with "more than one authorization method configured". So we pin the method:
+    PAT for on-behalf-of (user) calls, OAuth M2M for the app service principal.
+    """
+    from databricks.sdk import WorkspaceClient
+    host = get_host()
+    if user_token:
+        return WorkspaceClient(host=host, token=user_token, auth_type="pat")
+    cid = os.environ.get("DATABRICKS_CLIENT_ID")
+    csec = os.environ.get("DATABRICKS_CLIENT_SECRET")
+    if host and cid and csec:
+        return WorkspaceClient(host=host, client_id=cid, client_secret=csec, auth_type="oauth-m2m")
+    return WorkspaceClient()
 
 
 def push_event(event: dict):
