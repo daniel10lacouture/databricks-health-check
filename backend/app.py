@@ -109,6 +109,7 @@ def get_runners(executor, api_client, include_table_analysis, prefetch_data=None
     from checks.bi_tooling import BIToolingCheckRunner
     from checks.adoption import AdoptionCheckRunner
     from checks.genie_code import GenieCodeCheckRunner
+    from checks.genie_one_ready import GenieOneReadyCheckRunner
 
     return [
         DataEngineeringCheckRunner(executor, api_client, include_table_analysis, prefetch_data),
@@ -125,6 +126,7 @@ def get_runners(executor, api_client, include_table_analysis, prefetch_data=None
         WorkspaceAdminCheckRunner(executor, api_client, include_table_analysis, prefetch_data),
         AdoptionCheckRunner(executor, api_client, include_table_analysis, prefetch_data),
         GenieCodeCheckRunner(executor, api_client, include_table_analysis, prefetch_data),
+        GenieOneReadyCheckRunner(executor, api_client, include_table_analysis, prefetch_data),
         DataStorageCheckRunner(executor, api_client, include_table_analysis, prefetch_data),
     ]
 
@@ -362,7 +364,9 @@ def run_health_check(warehouse_id: str, include_table_analysis: bool, user_token
     try:
         token = user_token or get_token()
         executor = QueryExecutor(get_host().replace("https://", ""), token, warehouse_id)
-        api_client = APIClient()
+        # Prefer OBO (forwarded user token) for admin REST checks; falls back to the
+        # app service principal automatically when no user token is present.
+        api_client = APIClient(get_host(), user_token)
         # Prefetch disabled (check files use their own queries)
         prefetch_data = None
         push_event({"type": "progress", "message": "Prefetch complete, running checks..."})
@@ -540,7 +544,12 @@ def run_health_check(warehouse_id: str, include_table_analysis: bool, user_token
                 insights_data)
         except Exception as ge:
             logger.warning(f"GenAI insights failed (non-blocking): {ge}")
-            ai_insights = {"error": str(ge)}
+            ai_insights = {}
+        # "No error messages" policy: if AI insights didn't produce a real summary
+        # (e.g. Foundation Model endpoints returned 403), drop the panel entirely
+        # rather than surfacing an error to the user.
+        if not ai_insights or ai_insights.get("error") or not ai_insights.get("executive_summary"):
+            ai_insights = {}
 
         dow_names = {1:'Sunday',2:'Monday',3:'Tuesday',4:'Wednesday',5:'Thursday',6:'Friday',7:'Saturday'}
         wqv = wrapped_stats.get("query_volume", {})

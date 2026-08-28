@@ -296,11 +296,24 @@ class QueryExecutor:
 
 
 class APIClient:
-    """Wraps the Databricks SDK for REST API calls."""
+    """Wraps the Databricks SDK for REST API calls.
 
-    def __init__(self):
+    Prefers on-behalf-of (OBO) user auth when a forwarded user token is provided:
+    admin-scoped REST calls (IP access list, PATs, clusters, jobs) then run as the
+    signed-in user. If that user is a workspace admin they see full results instead
+    of the app service principal's limited view. Falls back to the app SP (default
+    WorkspaceClient auth) for headless/scheduled runs where no user token exists.
+    """
+
+    def __init__(self, host: str = "", token: str = ""):
         from databricks.sdk import WorkspaceClient
-        self.w = WorkspaceClient()
+        if host and token:
+            h = host if host.startswith("https://") else f"https://{host}"
+            self.w = WorkspaceClient(host=h, token=token)
+            self.auth_mode = "obo"
+        else:
+            self.w = WorkspaceClient()
+            self.auth_mode = "sp"
 
     def list_warehouses(self):
         return list(self.w.warehouses.list())
@@ -728,6 +741,26 @@ class BaseCheckRunner:
             )
 
         checks = self.run_checks()
+        # "No N/A" policy: a check is marked not_evaluated when its data source isn't
+        # available in this workspace (feature not enabled) or it errored. Rather than
+        # surface N/A / error text in the metrics, drop those checks entirely so only
+        # real, measurable results show. info/pass/fail/partial are kept.
+        checks = [c for c in checks if c.status != "not_evaluated"]
+
+        # If nothing measurable surfaced for this section, hide the whole section
+        # instead of showing an empty tab.
+        if not checks:
+            return SectionResult(
+                section_id=self.section_id,
+                section_name=self.section_name,
+                section_type=self.section_type,
+                active=False,
+                score=None,
+                subsections=self.get_subsections(),
+                checks=[],
+                icon=self.icon,
+            )
+
         scored = [c for c in checks if c.status not in ("not_evaluated", "info")]
         score = round(sum(c.score for c in scored) / len(scored), 1) if scored else None
 

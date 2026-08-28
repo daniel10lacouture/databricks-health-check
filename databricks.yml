@@ -18,6 +18,8 @@ resources:
         - catalog.tables:read
         - catalog.catalogs:read
         - catalog.schemas:read
+        - serving.serving-endpoints
+        - dashboards.genie
 
 targets:
   dev:
