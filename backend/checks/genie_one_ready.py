@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 class GenieOneReadyCheckRunner(BaseCheckRunner):
     section_id = "genie_one_ready"
-    section_name = "Genie ONE Ready"
+    section_name = "Genie One Ready"
     section_type = "advisory"
     icon = "sparkle"
 
@@ -88,13 +88,3 @@ class GenieOneReadyCheckRunner(BaseCheckRunner):
                 priority="low",
                 docs_url="https://docs.databricks.com/aws/en/workspace/"))
 
-    def check_6_grants(self) -> CheckResult:
-        return CheckResult("gr6", "Grant data + compute access", self._SUB,
-            0, "info",
-            "SELECT on the data behind Genie · CAN USE on a SQL warehouse",
-            "Users can query the content shared with them",
-            recommendation=Recommendation(
-                action="Grant Consumer users SELECT on the Unity Catalog tables/views behind your Genie spaces and dashboards (grant to groups, not individuals, for scale), and CAN USE on one SQL warehouse to power the multi-agent Genie experience. Then share the relevant Genie spaces and dashboards with those users/groups.",
-                impact="Without SELECT + a warehouse, Genie has nothing to answer from.",
-                priority="high",
-                docs_url="https://docs.databricks.com/aws/en/genie/set-up"))
